@@ -25,14 +25,21 @@ export function Inspector({
     <aside className="zone4" aria-label={t('zone.inspector')}>
       <div className="zone4__header">
         <h2>{t(`inspector.${mode}`)}</h2>
-        <button
-          type="button"
-          className="md-btn md-btn--text"
-          onClick={onClose}
-          aria-label={t('common.close')}
-        >
-          ×
-        </button>
+        {/* A close control only when it closes something (human-confirmed
+            2026-09-28): the X clears the selection, so it can only appear where
+            there *is* a selection. In `summary` it was a button wired to a
+            no-op that read as "closes Resumo". The panel itself has no manual
+            collapse yet - that is the open Zone 4 decision for c8. */}
+        {mode === 'summary' ? null : (
+          <button
+            type="button"
+            className="md-btn md-btn--text"
+            onClick={onClose}
+            aria-label={t('common.close')}
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {mode === 'summary' ? (

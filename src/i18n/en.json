@@ -30,6 +30,7 @@
 
   "root.wolfsRootEnv": "WOLFS_ROOT variable",
   "root.markerWalk": "Marker found",
+  "root.packagedAppDir": "App/ folder (no marker yet)",
   "root.unrootedFallback": "No marker (local folder)",
 
   "state.empty": "This folder is empty.",

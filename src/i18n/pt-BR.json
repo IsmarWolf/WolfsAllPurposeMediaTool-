@@ -30,6 +30,7 @@
 
   "root.wolfsRootEnv": "Variável WOLFS_ROOT",
   "root.markerWalk": "Marcador encontrado",
+  "root.packagedAppDir": "Pasta App/ do aplicativo (ainda sem marcador)",
   "root.unrootedFallback": "Sem marcador (pasta local)",
 
   "state.empty": "Esta pasta está vazia.",

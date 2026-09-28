@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from '../app/AppShell'
 import { Providers } from '../app/providers'
+import { Inspector } from '../components/layout/Inspector'
 
 const STATS = {
   totalItems: 1234,
@@ -106,6 +107,41 @@ describe('shell contract (§10.6.3 / §10.6.6, C16)', () => {
   it('hides the bulk toolbar while nothing is selected', async () => {
     const { container } = await renderShell()
     expect(container.querySelector('.zone5')).toBeNull()
+  })
+})
+
+describe('Zone 4 close control (human-confirmed 2026-09-28)', () => {
+  function renderInspector(mode: 'summary' | 'single' | 'bulk', onClose = vi.fn()) {
+    render(
+      <Providers>
+        <Inspector
+          mode={mode}
+          count={mode === 'bulk' ? 3 : mode === 'single' ? 1 : 0}
+          onClose={onClose}
+        />
+      </Providers>,
+    )
+    return { onClose }
+  }
+
+  // The rule: a close control only when it closes something. The X clears the
+  // selection, so in `summary` - where there is no selection - it was a button
+  // wired to a no-op that read as "closes Resumo".
+  it('has no close button in the summary tab', () => {
+    renderInspector('summary')
+    expect(screen.queryByRole('button', { name: 'Fechar' })).toBeNull()
+  })
+
+  it('offers the close button when a selection is what it would close', () => {
+    const { onClose } = renderInspector('single')
+    const close = screen.getByRole('button', { name: 'Fechar' })
+    close.click()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('still names the mode it is showing', () => {
+    renderInspector('summary')
+    expect(screen.getByRole('heading', { name: 'Resumo' })).toBeTruthy()
   })
 })
 
