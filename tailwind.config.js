@@ -1,0 +1,102 @@
+const role = (name) => `rgb(var(--md-${name}-rgb) / <alpha-value>)`
+
+export default {
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        bg: role('bg'),
+        fg: role('fg'),
+        primary: role('primary'),
+        'on-primary': role('on-primary'),
+        'primary-ctr': role('primary-ctr'),
+        'on-primary-ctr': role('on-primary-ctr'),
+        'secondary-ctr': role('secondary-ctr'),
+        'on-secondary-ctr': role('on-secondary-ctr'),
+        tertiary: role('tertiary'),
+        'on-tertiary': role('on-tertiary'),
+        'tertiary-ctr': role('tertiary-ctr'),
+        'on-tertiary-ctr': role('on-tertiary-ctr'),
+        'surface-ctr': role('surface-ctr'),
+        'surface-ctr-low': role('surface-ctr-low'),
+        'surface-ctr-high': role('surface-ctr-high'),
+        outline: role('outline'),
+        'outline-ctr': role('outline-ctr'),
+        'on-surface-variant': role('on-surface-variant'),
+        error: role('error'),
+        'on-error': role('on-error'),
+        'error-ctr': role('error-ctr'),
+        'on-error-ctr': role('on-error-ctr'),
+        scrim: 'var(--md-scrim)',
+      },
+      borderRadius: {
+        xs: 'var(--radius-xs)',
+        sm: 'var(--radius-sm)',
+        md: 'var(--radius-md)',
+        lg: 'var(--radius-lg)',
+        xl: 'var(--radius-xl)',
+        xxl: 'var(--radius-xxl)',
+        hero: 'var(--radius-hero)',
+        pill: 'var(--radius-pill)',
+        'field-top': 'var(--radius-field-top)',
+      },
+      boxShadow: {
+        rest: 'var(--shadow-rest)',
+        hover: 'var(--shadow-hover)',
+        fab: 'var(--shadow-fab)',
+        modal: 'var(--shadow-modal)',
+      },
+      fontFamily: {
+        sans: ['var(--font-sans)'],
+      },
+      fontSize: {
+        'display-l': ['var(--text-display-l)', { lineHeight: '1.2', fontWeight: '500' }],
+        'headline-l': ['var(--text-headline-l)', { lineHeight: '1.2', fontWeight: '500' }],
+        'headline-m': ['var(--text-headline-m)', { lineHeight: '1.25', fontWeight: '500' }],
+        'title-l': ['var(--text-title-l)', { lineHeight: '1.3', fontWeight: '500' }],
+        'body-l': ['var(--text-body-l)', { lineHeight: '1.5' }],
+        'body-m': ['var(--text-body-m)', { lineHeight: '1.55' }],
+        'label-m': [
+          'var(--text-label-m)',
+          { lineHeight: '1.4', letterSpacing: 'var(--tracking-label)', fontWeight: '500' },
+        ],
+        'label-s': [
+          'var(--text-label-s)',
+          { lineHeight: '1.4', letterSpacing: 'var(--tracking-label)', fontWeight: '500' },
+        ],
+      },
+      spacing: {
+        card: 'var(--space-card)',
+        section: 'var(--space-section)',
+        gap: 'var(--space-gap)',
+        hit: 'var(--hit-target)',
+        'icon-btn': 'var(--icon-btn)',
+        fab: 'var(--fab-size)',
+      },
+      transitionTimingFunction: {
+        emphasized: 'var(--ease-emphasized)',
+      },
+      transitionDuration: {
+        micro: 'var(--dur-micro)',
+        standard: 'var(--dur-standard)',
+        large: 'var(--dur-large)',
+      },
+      zIndex: {
+        canvas: 'var(--z-canvas)',
+        sticky: 'var(--z-sticky)',
+        float: 'var(--z-float)',
+        bulk: 'var(--z-bulk)',
+        drawer: 'var(--z-drawer)',
+        modal: 'var(--z-modal)',
+        toast: 'var(--z-toast)',
+      },
+      borderWidth: {
+        field: 'var(--border-field)',
+      },
+      backdropBlur: {
+        glass: 'var(--organic-blur)',
+      },
+    },
+  },
+  plugins: [],
+}

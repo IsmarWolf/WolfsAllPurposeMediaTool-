@@ -1,0 +1,20 @@
+{
+  "app.name": "WolfsMedia",
+  "app.tagline": "Backup offline de mídia",
+  "nav.group.explorar": "Explorar",
+  "nav.dashboard": "Nº geral",
+  "nav.media": "Mídia",
+  "nav.lists": "Listas",
+  "nav.group.transferir": "Transferir",
+  "nav.backup": "Backup",
+  "nav.group.sistema": "Sistema",
+  "nav.settings": "Ajustes",
+  "nav.group.seguranca": "Segurança",
+  "nav.vault": "Cofre",
+  "shell.import": "Importar",
+  "shell.dbHealth": "Estado do banco",
+  "shell.zone.header": "Zona 1 · Cabeçalho",
+  "shell.zone.sidebar": "Zona 2 · Navegação",
+  "shell.zone.canvas": "Zona 3 · Conteúdo",
+  "shell.scaffoldNotice": "Estrutura base do aplicativo (c1) — o conteúdo entra nas próximas fases."
+}

@@ -1,0 +1,49 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color-scheme: light;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-bg text-fg text-body-m antialiased;
+  }
+
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--md-primary);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  ::selection {
+    background-color: rgb(var(--md-secondary-ctr-rgb));
+    color: rgb(var(--md-on-secondary-ctr-rgb));
+  }
+}
+
+@layer utilities {
+  .organic-blob {
+    filter: blur(var(--organic-blur));
+    opacity: var(--organic-opacity);
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+
+  .glass {
+    background-color: var(--md-glass-bg);
+    border-color: var(--md-glass-border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

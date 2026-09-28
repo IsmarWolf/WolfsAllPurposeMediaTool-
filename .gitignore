@@ -2,21 +2,21 @@
 node_modules/
 
 # frontend build
-dist/
-dist-ssr/
+/dist/
+/dist-ssr/
 *.local
 
 # rust / tauri
-src-tauri/target/
-target/
+/src-tauri/target/
+/target/
 
 # Runtime portable tree. In dev the repo root IS the portable root (PLAN.md 4.4),
-# so these are data, not source.
-App/
-Database/
-Thumbnails/
-Media/
-.vault/
+# so these are data, not source. Root-anchored so src/app/ and friends are kept.
+/App/
+/Database/
+/Thumbnails/
+/Media/
+/.vault/
 
 # logs / os
 *.log

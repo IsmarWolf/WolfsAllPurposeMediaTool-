@@ -1,0 +1,7 @@
+node_modules
+dist
+src-tauri/target
+package-lock.json
+mockup
+PLAN.md
+AGENTS.md

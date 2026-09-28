@@ -1,0 +1,20 @@
+{
+  "app.name": "WolfsMedia",
+  "app.tagline": "Offline media backup",
+  "nav.group.explorar": "Explore",
+  "nav.dashboard": "Overview",
+  "nav.media": "Media",
+  "nav.lists": "Lists",
+  "nav.group.transferir": "Transfer",
+  "nav.backup": "Backup",
+  "nav.group.sistema": "System",
+  "nav.settings": "Settings",
+  "nav.group.seguranca": "Security",
+  "nav.vault": "Vault",
+  "shell.import": "Import",
+  "shell.dbHealth": "Database health",
+  "shell.zone.header": "Zone 1 · Header",
+  "shell.zone.sidebar": "Zone 2 · Navigation",
+  "shell.zone.canvas": "Zone 3 · Content",
+  "shell.scaffoldNotice": "Base app shell (c1) — screens land in the following phases."
+}
