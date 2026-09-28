@@ -36,7 +36,7 @@ export interface VaultStatusDto {
   hasRecoveryHint: boolean
 }
 
-export type RootSourceDto = 'wolfsRootEnv' | 'markerWalk' | 'unrootedFallback'
+export type RootSourceDto = 'wolfsRootEnv' | 'markerWalk' | 'packagedAppDir' | 'unrootedFallback'
 
 /** §8.1 `resolve_app_root`, plus the boot facts Zone 1 and §11.7 display. */
 export interface RootInfoDto {

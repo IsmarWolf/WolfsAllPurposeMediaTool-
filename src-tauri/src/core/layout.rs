@@ -242,6 +242,108 @@ mod tests {
         assert_ne!(attrs & FILE_ATTRIBUTE_SYSTEM, 0);
     }
 
+    /// The tree the deploy script declares, read straight out of the `.ps1`.
+    /// A PowerShell array cannot be shared with Rust, so the two lists are kept
+    /// equal by *parsing* rather than by convention.
+    fn deploy_script_trees() -> Vec<String> {
+        let script_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../scripts/deploy-portable.ps1"
+        );
+        let script = fs::read_to_string(script_path)
+            .unwrap_or_else(|e| panic!("cannot read the deploy script at {script_path}: {e}"));
+
+        let marker = "$Script:Trees = @(";
+        let start = script
+            .find(marker)
+            .expect("deploy script must declare $Script:Trees")
+            + marker.len();
+        let body = &script[start..];
+        let end = body.find(')').expect("unterminated $Script:Trees array");
+        body[..end]
+            .lines()
+            .map(|line| line.trim().trim_matches('\'').trim())
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect()
+    }
+
+    /// §16.1 step 4 says the deploy script creates "the same tree" as this
+    /// module. If a folder is added, renamed or reordered on one side, this
+    /// fails.
+    #[test]
+    fn deploy_script_tree_matches_layout() {
+        let declared = deploy_script_trees();
+
+        // Built from the very accessors `ensure` uses, relative to the root and
+        // "/" -joined, so the comparison is on the §5.4 relative-path contract.
+        let root = Path::new("X:\\ssd");
+        let resolver = PathResolver::new(root.to_path_buf(), RootSource::MarkerWalk);
+        let expected = [
+            resolver.db_dir(),
+            resolver.thumb_dir(ThumbSize::Small),
+            resolver.thumb_dir(ThumbSize::Large),
+            resolver.media_device(PC_DEVICE_LABEL).unwrap(),
+            resolver.vault_items(),
+            resolver.vault_thumbs(),
+            resolver.app_dir(),
+        ]
+        .iter()
+        .map(|p| {
+            p.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            declared, expected,
+            "scripts/deploy-portable.ps1 must create exactly the §5.5 order of core/layout.rs"
+        );
+    }
+
+    ///     /// The deploy script and the resolver must agree on where a fresh drive
+    /// lives: §16.1 step 6 seeds `Database/app.db`, and §5.2 step 2 finds it
+    /// from `App/`. This is the full first-boot path in miniature - a drive that
+    /// only the script has ever touched must resolve to the drive, never to
+    /// `App/` inside it.
+    #[cfg(windows)]
+    #[test]
+    fn a_script_deployed_drive_resolves_to_its_own_root() {
+        let root = tempfile::tempdir().unwrap();
+
+        // The script's tree, then its marker (mirrors Initialize-Marker).
+        for relative in deploy_script_trees() {
+            fs::create_dir_all(root.path().join(relative.replace('/', "\\"))).unwrap();
+        }
+        let marker = root.path().join("Database").join("app.db");
+        fs::write(&marker, b"").unwrap();
+
+        // The exe where step 2 installs it.
+        let app_dir = root.path().join("App");
+        fs::write(app_dir.join(crate::core::paths::EXE_NAME), b"MZ").unwrap();
+
+        let resolver = PathResolver::resolve(&app_dir, None);
+        assert_eq!(
+            resolver.root(),
+            root.path(),
+            "the deployed drive itself is the root"
+        );
+        assert_eq!(resolver.source(), RootSource::MarkerWalk);
+        assert!(
+            crate::core::paths::has_marker(resolver.root()),
+            "§4.3 marker present after deploy"
+        );
+
+        // And with the marker gone, the packaged rule must not let it fall back
+        // into App/: that is the bug this pairing exists to prevent.
+        fs::remove_file(&marker).unwrap();
+        let without_marker = PathResolver::resolve(&app_dir, None);
+        assert_eq!(without_marker.root(), root.path());
+        assert_eq!(without_marker.source(), RootSource::PackagedAppDir);
+    }
+
     #[cfg(windows)]
     #[test]
     fn only_the_vault_is_hidden() {

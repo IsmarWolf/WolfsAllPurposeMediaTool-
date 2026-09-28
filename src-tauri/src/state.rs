@@ -182,6 +182,8 @@ pub fn source_label(source: RootSource) -> &'static str {
     match source {
         RootSource::WolfsRootEnv => "WOLFS_ROOT",
         RootSource::MarkerWalk => "marker",
+        // Not "marker": no marker was found, the root came from the layout.
+        RootSource::PackagedAppDir => "App/ parent",
         RootSource::UnrootedFallback => "unrooted",
     }
 }

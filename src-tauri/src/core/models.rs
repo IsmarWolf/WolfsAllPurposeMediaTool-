@@ -89,6 +89,7 @@ impl Serialize for RootSource {
         serializer.serialize_str(match self {
             RootSource::WolfsRootEnv => "wolfsRootEnv",
             RootSource::MarkerWalk => "markerWalk",
+            RootSource::PackagedAppDir => "packagedAppDir",
             RootSource::UnrootedFallback => "unrootedFallback",
         })
     }
@@ -134,6 +135,20 @@ mod tests {
     fn root_source_serializes_as_a_tag() {
         let json = serde_json::to_string(&RootSource::UnrootedFallback).unwrap();
         assert_eq!(json, "\"unrootedFallback\"");
+    }
+
+    /// Every arm the frontend union in `src/types/api.ts` depends on. A new
+    /// variant that forgets its tag would silently show as an unknown source.
+    #[test]
+    fn every_root_source_has_the_tag_the_frontend_expects() {
+        for (source, expected) in [
+            (RootSource::WolfsRootEnv, "\"wolfsRootEnv\""),
+            (RootSource::MarkerWalk, "\"markerWalk\""),
+            (RootSource::PackagedAppDir, "\"packagedAppDir\""),
+            (RootSource::UnrootedFallback, "\"unrootedFallback\""),
+        ] {
+            assert_eq!(serde_json::to_string(&source).unwrap(), expected);
+        }
     }
 
     #[test]

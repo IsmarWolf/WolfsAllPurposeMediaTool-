@@ -16,6 +16,8 @@ pub const VAULT_THUMBS_DIR: &str = "thumbs";
 pub const APP_DIR: &str = "App";
 pub const APP_BIN_DIR: &str = "bin";
 pub const FFMPEG_EXE_NAME: &str = "ffmpeg.exe";
+/// The explicit `[[bin]] name` from §4.4, in production as in dev.
+pub const EXE_NAME: &str = "BackupManager.exe";
 pub const PC_DEVICE_LABEL: &str = "PC";
 pub const FALLBACK_DEVICE_LABEL: &str = "Dispositivo";
 pub const MAX_LABEL_LEN: usize = 64;
@@ -30,6 +32,11 @@ const WINDOWS_RESERVED: [&str; 22] = [
 pub enum RootSource {
     WolfsRootEnv,
     MarkerWalk,
+    /// The exe sits in an `App/` folder that holds the deployed binary, so the
+    /// root is its parent - recognized by layout, not by the marker (§5.2 step
+    /// 2b, added in c5). Rooted, but it is a *guess* about an unproven root, so
+    /// the boot log must not claim a marker was found.
+    PackagedAppDir,
     UnrootedFallback,
 }
 
@@ -99,6 +106,16 @@ impl PathResolver {
 
         if let Some(found) = walk_up_for_marker(start) {
             return Self::new(found, RootSource::MarkerWalk);
+        }
+
+        // Step 2b (c5): a deployed root has no marker until its first boot, and
+        // the fallback below would then build the whole tree one level too deep,
+        // inside App/. Recognizing the packaged layout is not the "first ancestor
+        // with a Media dir" guess the §5.2 rationale rejects: it requires the
+        // *current exe* to sit in a folder literally named `App`, so an ordinary
+        // directory can never trigger it.
+        if let Some(found) = packaged_root(start) {
+            return Self::new(found, RootSource::PackagedAppDir);
         }
 
         Self::new(start.to_path_buf(), RootSource::UnrootedFallback)
@@ -328,6 +345,22 @@ fn walk_up_for_marker(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// §5.2 step 2b. `start` is the folder holding the running executable; the root
+/// is its parent when - and only when - `start` is the deployed `App/` folder,
+/// identified by the exe name §4.4 pins. Case-insensitive, because Windows is.
+fn packaged_root(start: &Path) -> Option<PathBuf> {
+    let is_app_dir = start
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case(APP_DIR));
+    if !is_app_dir {
+        return None;
+    }
+    if !start.join(EXE_NAME).is_file() {
+        return None;
+    }
+    start.parent().map(Path::to_path_buf)
+}
+
 fn start_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -484,6 +517,73 @@ mod tests {
         assert_eq!(resolver.root(), exe_dir);
         assert_eq!(resolver.source(), RootSource::UnrootedFallback);
         assert!(!resolver.is_rooted());
+    }
+
+    /// §5.2 step 2b, and the reason it exists: a drive deployed by c5 has no
+    /// marker until the first boot, so without this the root would be the exe
+    /// folder and the whole tree would land inside `App/`.
+    #[test]
+    fn a_deployed_app_folder_yields_its_parent() {
+        let bare = TempDir::new().expect("plain dir");
+        let app_dir = bare.path().join(APP_DIR);
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(app_dir.join(EXE_NAME), b"MZ").expect("exe");
+        assert!(!has_marker(bare.path()), "precondition: no marker yet");
+
+        let resolver = PathResolver::resolve(&app_dir, None);
+
+        assert_eq!(resolver.root(), bare.path());
+        assert_eq!(resolver.source(), RootSource::PackagedAppDir);
+        assert!(
+            resolver.is_rooted(),
+            "a deployed root is not the unrooted case"
+        );
+    }
+
+    /// The rule must not fire on a folder that merely happens to be called `App`:
+    /// it is only the deployed layout when the pinned exe is actually in there.
+    #[test]
+    fn an_app_folder_without_the_exe_is_not_taken_as_a_root() {
+        let bare = TempDir::new().expect("plain dir");
+        let app_dir = bare.path().join(APP_DIR);
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(app_dir.join("notes.txt"), b"oi").expect("unrelated file");
+
+        let resolver = PathResolver::resolve(&app_dir, None);
+
+        assert_eq!(resolver.root(), app_dir);
+        assert_eq!(resolver.source(), RootSource::UnrootedFallback);
+    }
+
+    /// The marker is the proof; the layout guess is only the fallback. Once a
+    /// marker exists anywhere up the walk it wins, so re-deploying never moves a
+    /// root that the app is already using.
+    #[test]
+    fn a_real_marker_outranks_the_packaged_layout_guess() {
+        let root = portable_root();
+        let app_dir = root.path().join(APP_DIR);
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(app_dir.join(EXE_NAME), b"MZ").expect("exe");
+
+        let resolver = PathResolver::resolve(&app_dir, None);
+
+        assert_eq!(resolver.root(), root.path());
+        assert_eq!(resolver.source(), RootSource::MarkerWalk);
+    }
+
+    /// The env escape hatch still wins over both (human-confirmed §5.2 step 1).
+    #[test]
+    fn the_env_root_outranks_the_packaged_layout_guess() {
+        let bare = TempDir::new().expect("plain dir");
+        let app_dir = bare.path().join(APP_DIR);
+        fs::create_dir_all(&app_dir).expect("app dir");
+        fs::write(app_dir.join(EXE_NAME), b"MZ").expect("exe");
+
+        let override_root = portable_root();
+        let resolver = PathResolver::resolve(&app_dir, Some(override_root.path().as_os_str()));
+
+        assert_eq!(resolver.root(), override_root.path());
+        assert_eq!(resolver.source(), RootSource::WolfsRootEnv);
     }
 
     #[test]

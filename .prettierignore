@@ -1,7 +1,12 @@
 node_modules
 dist
 src-tauri/target
+# Tauri regenerates these on every build (tauri-build); they are git-ignored
+# generated artifacts, not source, and they are not prettier-formatted.
+src-tauri/gen
 package-lock.json
 mockup
 PLAN.md
 AGENTS.md
+.docs-backup
+scripts
