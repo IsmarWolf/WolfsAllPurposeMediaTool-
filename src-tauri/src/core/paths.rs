@@ -11,8 +11,11 @@ pub const MEDIA_DIR: &str = "Media";
 pub const NO_META_DIR: &str = "Sem_Metadados";
 pub const THUMBNAILS_DIR: &str = "Thumbnails";
 pub const VAULT_DIR: &str = ".vault";
+pub const VAULT_ITEMS_DIR: &str = "items";
+pub const VAULT_THUMBS_DIR: &str = "thumbs";
 pub const APP_DIR: &str = "App";
-pub const FFMPEG_RELATIVE: [&str; 3] = ["App", "bin", "ffmpeg.exe"];
+pub const APP_BIN_DIR: &str = "bin";
+pub const FFMPEG_EXE_NAME: &str = "ffmpeg.exe";
 pub const PC_DEVICE_LABEL: &str = "PC";
 pub const FALLBACK_DEVICE_LABEL: &str = "Dispositivo";
 pub const MAX_LABEL_LEN: usize = 64;
@@ -113,6 +116,11 @@ impl PathResolver {
         self.root.join(DATABASE_DIR).join(MARKER_DB)
     }
 
+    /// `Database/` — the folder holding `app.db` (§5.5 boot step 1).
+    pub fn db_dir(&self) -> PathBuf {
+        self.root.join(DATABASE_DIR)
+    }
+
     pub fn geonames_path(&self) -> PathBuf {
         self.root.join(DATABASE_DIR).join(GEONAMES_FILE)
     }
@@ -143,10 +151,28 @@ impl PathResolver {
         self.root.join(VAULT_DIR)
     }
 
+    /// `.vault/items/` — where encrypted originals live (§4.1, §5.5).
+    pub fn vault_items(&self) -> PathBuf {
+        self.vault_root().join(VAULT_ITEMS_DIR)
+    }
+
+    /// `.vault/thumbs/` — where vault thumbnails live (§4.1, §5.5).
+    pub fn vault_thumbs(&self) -> PathBuf {
+        self.vault_root().join(VAULT_THUMBS_DIR)
+    }
+
+    /// `App/` — sibling of `BackupManager.exe`, holds `bin/ffmpeg.exe` (§4.1, §5.5).
+    pub fn app_dir(&self) -> PathBuf {
+        self.root.join(APP_DIR)
+    }
+
+    /// `App/bin/` — where ffmpeg is deployed (§4.1).
+    pub fn app_bin(&self) -> PathBuf {
+        self.app_dir().join(APP_BIN_DIR)
+    }
+
     pub fn ffmpeg_exe(&self) -> PathBuf {
-        FFMPEG_RELATIVE
-            .iter()
-            .fold(self.root.clone(), |acc, part| acc.join(part))
+        self.app_bin().join(FFMPEG_EXE_NAME)
     }
 
     pub fn rel_to_abs(&self, rel: &str) -> Result<PathBuf, PathError> {
