@@ -1,0 +1,864 @@
+/**
+ * Shell + component styles (§10.6.3, §19.1).
+ *
+ * Every colour, radius, elevation and motion value comes from `tokens.css` —
+ * swapping tokens re-skins the app, this file never hardcodes a hue. Surface
+ * separation is done with tonal steps (MD3), not with borders.
+ */
+
+.shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  /* The shell owns the viewport, not the page: each zone scrolls on its own,
+     so the sidebar and the inspector stay put when the canvas is long. A
+     `min-height: 100vh` here let the whole page scroll instead, which walked
+     the nav off the top of the screen. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background-color: var(--md-surface-ctr-low);
+}
+
+.shell__body {
+  display: grid;
+  /* Zone 2 | Zone 3 | Zone 4 */
+  grid-template-columns: 264px minmax(0, 1fr) 328px;
+  min-height: 0;
+}
+
+/* Every column must be allowed to shrink below its content, otherwise a wide
+   child (the media grid, a long code path) pushes the other zones over each
+   other instead of scrolling its own column. `min-height: 0` is the other half
+   and is not optional: a grid item defaults to `min-height: auto`, so a tall
+   canvas would overflow its track and get *clipped* by the shell's
+   `overflow: hidden` instead of scrolling. */
+.shell__body > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- Zone 1 */
+
+.zone1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-gap);
+  flex-wrap: wrap;
+  padding: var(--space-xs) var(--space-card);
+  background-color: var(--md-surface-ctr);
+}
+
+.zone1__brand {
+  font-size: var(--text-title-l);
+  font-weight: 500;
+  color: var(--md-primary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: var(--space-xs) 0;
+}
+
+.zone1__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.zone1__db-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background-color: var(--md-outline-ctr);
+}
+
+.zone1__db-dot--ok {
+  background-color: var(--md-primary);
+}
+
+.zone1__db-dot--bad {
+  background-color: var(--md-error);
+}
+
+/* ---------------------------------------------------------------- Zone 2 */
+
+.zone2 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-card) var(--space-md);
+  background-color: var(--md-surface-ctr-low);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+/* The group heading is a label, not a nav row: small, letterspaced, wide
+   tracking and a rule above it, so it cannot be mistaken for an option. */
+.zone2__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0 var(--space-xs);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--md-on-surface-variant);
+  text-transform: uppercase;
+}
+
+.zone2__group:first-child .zone2__heading {
+  margin-top: 0;
+}
+
+.zone2__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-md);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--md-fg);
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.zone2__item:hover {
+  background-color: var(--md-surface-ctr);
+}
+
+.zone2__item--active {
+  background-color: var(--md-secondary-ctr);
+  color: var(--md-on-secondary-ctr);
+  font-weight: 500;
+}
+
+.zone2__badge {
+  margin-left: auto;
+  padding: 0 var(--space-sm);
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-pill);
+}
+
+.zone2__divider {
+  margin: var(--space-md) 0;
+  border-top: 1px solid var(--md-outline-ctr);
+}
+
+.zone2__group--security {
+  margin-top: auto;
+}
+
+/* Cofre: detached, danger, dashed keyline — never a normal nav row (§11.0).
+   The keyline is an `outline` on purpose: a `border` would push the label one
+   pixel to the right and knock the row out of alignment with its siblings. */
+.zone2__item--vault {
+  color: var(--md-error);
+  outline: 1px dashed var(--md-error);
+  outline-offset: -1px;
+  font-weight: 500;
+}
+
+.zone2__marker {
+  color: var(--md-error);
+  font-size: var(--text-title-l);
+  line-height: 0.8;
+}
+
+.zone2__item--vault:hover {
+  background-color: var(--md-error-ctr);
+  color: var(--md-on-error-ctr);
+}
+
+.zone2__item--vault:hover .zone2__marker,
+.zone2__item--vault.zone2__item--active {
+  color: var(--md-on-error-ctr);
+}
+
+.zone2__item--vault.zone2__item--active {
+  background-color: var(--md-error-ctr);
+}
+
+.zone2__lock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background-color: var(--md-primary);
+}
+
+.zone2__lock-dot--locked {
+  background-color: var(--md-outline);
+}
+
+/* ---------------------------------------------------------------- Zone 3 */
+
+.zone3 {
+  padding: var(--space-card);
+  /* Room for the floating Zone 5 bar, so the last card of a screen is never
+     covered by it. */
+  padding-bottom: calc(var(--space-section) + var(--space-card));
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Reserve the scrollbar so switching screens never shifts the layout. */
+  scrollbar-gutter: stable;
+  background-color: var(--md-bg);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card);
+  max-width: 1100px;
+}
+
+.screen__todo,
+.md-hint {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+/* ---------------------------------------------------------------- Zone 4 */
+
+.zone4 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-card);
+  background-color: var(--md-surface-ctr-low);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.zone4__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.zone4__header h2 {
+  margin: 0;
+  font-size: var(--text-title-l);
+  font-weight: 500;
+}
+
+.zone4__hint,
+.zone4__bulk-count {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+/* ---------------------------------------------------------------- Zone 5 */
+
+.zone5 {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-card);
+  transform: translateX(-50%);
+  z-index: var(--z-bulk);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  /* Never wider than the window, whatever the count and the labels. */
+  max-width: calc(100vw - var(--space-card) * 2);
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-md);
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-fab);
+}
+
+.zone5__spacer {
+  width: var(--space-card);
+}
+
+.zone5__count {
+  padding-left: var(--space-field-top);
+  font-size: var(--text-label-m);
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------- toasts */
+
+.md-toasts {
+  position: fixed;
+  right: var(--space-card);
+  bottom: var(--space-card);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.md-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  /* Fits the window, and clears the floating Zone 5 bar. */
+  max-width: min(420px, calc(100vw - var(--space-card) * 2));
+  padding: var(--space-md) var(--space-card);
+  font-size: var(--text-body-m);
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-modal);
+}
+
+.md-toast--error {
+  color: var(--md-on-error-ctr);
+  background-color: var(--md-error-ctr);
+}
+
+.md-toast--success {
+  color: var(--md-on-primary-ctr);
+  background-color: var(--md-primary-ctr);
+}
+
+.md-toast__close {
+  margin-left: auto;
+  font-size: var(--text-title-l);
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.md-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-card);
+  font: inherit;
+  font-size: var(--text-label-m);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-micro) var(--ease-emphasized),
+    box-shadow var(--dur-micro) var(--ease-emphasized);
+}
+
+.md-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.md-btn--filled {
+  color: var(--md-on-primary);
+  background-color: var(--md-primary);
+}
+
+.md-btn--tonal {
+  color: var(--md-on-secondary-ctr);
+  background-color: var(--md-secondary-ctr);
+}
+
+.md-btn--text {
+  color: var(--md-primary);
+  background-color: transparent;
+}
+
+.md-btn--outlined {
+  color: var(--md-primary);
+  background-color: transparent;
+  border: 1px solid var(--md-outline);
+}
+
+.md-btn--danger {
+  color: var(--md-error);
+  background-color: transparent;
+}
+
+/* ---------------------------------------------------------------- cards */
+
+.md-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-card);
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-md);
+}
+
+.md-card--wide {
+  width: 100%;
+}
+
+.md-card h2,
+.md-card h3 {
+  margin: 0;
+  font-size: var(--text-body-l);
+  font-weight: 500;
+}
+
+.md-card__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.md-stat__value {
+  margin: 0;
+  font-size: var(--text-headline-m);
+  font-weight: 400;
+}
+
+.md-stat__label,
+.md-stat__hint {
+  margin: 0;
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.md-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-field-top);
+  min-height: 32px;
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-pill);
+}
+
+.md-badge--ok {
+  color: var(--md-on-primary-ctr);
+  background-color: var(--md-primary-ctr);
+}
+
+.md-badge--warn {
+  color: var(--md-on-error-ctr);
+  background-color: var(--md-error-ctr);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.md-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-gap);
+}
+
+.md-header h1 {
+  margin: 0;
+  font-size: var(--text-headline-m);
+  font-weight: 400;
+}
+
+.md-header p {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--text-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+/* ---------------------------------------------------------------- states */
+
+.state-region {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-md);
+}
+
+.state-region[data-state='empty'],
+.state-region[data-state='noresults'],
+.state-region[data-state='error'] {
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: var(--space-section, 48px) var(--space-card);
+  text-align: center;
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-lg);
+}
+
+.md-skeleton {
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-xs);
+}
+
+.md-empty {
+  margin: 0;
+  font-size: var(--text-body-l);
+  color: var(--md-on-surface-variant);
+}
+
+.md-empty__cta {
+  margin: 0;
+  font-size: var(--text-body-m);
+  color: var(--md-primary);
+}
+
+.md-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-card);
+  text-align: center;
+  background-color: var(--md-error-ctr);
+  color: var(--md-on-error-ctr);
+  border-radius: var(--radius-md);
+}
+
+.md-error__message {
+  margin: 0;
+  font-size: var(--text-body-l);
+}
+
+.md-error__detail {
+  margin: 0;
+  font-size: var(--text-label-m);
+}
+
+/* ---------------------------------------------------------------- chips */
+
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-field-top);
+  font: inherit;
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+  background-color: transparent;
+  border: 1px solid var(--md-outline);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.md-chip--active {
+  color: var(--md-on-secondary-ctr);
+  background-color: var(--md-secondary-ctr);
+  border-color: transparent;
+}
+
+.md-chip--danger {
+  color: var(--md-error);
+  border-color: var(--md-error);
+}
+
+/* ---------------------------------------------------------------- misc */
+
+.dash-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-card);
+  align-items: start;
+}
+
+.dash-cols__main,
+.dash-cols__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-card);
+}
+
+.dash-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.dash-meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-md) 0;
+}
+
+.dash-meter__row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.dash-meter__label,
+.dash-meter__value {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.dash-meter__value {
+  text-align: right;
+}
+
+.dash-system__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.dash-system__root {
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.dash-dev,
+.dash-demo {
+  padding: var(--space-md);
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-md);
+}
+
+.dash-demo__grid,
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-size), 1fr));
+  gap: var(--space-md);
+}
+
+.md-meter {
+  height: 8px;
+  overflow: hidden;
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-pill);
+}
+
+.md-meter__fill {
+  height: 100%;
+  background-color: var(--md-primary);
+  border-radius: var(--radius-pill);
+}
+
+.md-meter__fill--images {
+  background-color: var(--md-primary);
+}
+
+.md-meter__fill--videos {
+  background-color: var(--md-tertiary);
+}
+
+.md-meter__fill--hidden {
+  background-color: var(--md-outline);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-xs) var(--space-card);
+  margin: 0;
+}
+
+.kv dt {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.l1-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.l1-row__label {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.source-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-pill);
+  align-self: flex-start;
+}
+
+.source-tabs__tab {
+  min-height: 40px;
+  padding: 0 var(--space-card);
+  font: inherit;
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.source-tabs__tab--active {
+  color: var(--md-on-secondary-ctr);
+  background-color: var(--md-secondary-ctr);
+  font-weight: 500;
+}
+
+.vault-gate__status {
+  margin: 0;
+  font-size: var(--text-body-l);
+}
+
+/* ==========================================================================
+   Window size classes (MD3 §19.1 vocabulary, applied to the 4-zone shell).
+
+   The layout is fluid between these, and the breakpoints are about *content*,
+   not about device names:
+     - XS   < 1080px : the three columns no longer fit side by side
+     - SM   < 1280px : the inspector is the first thing to go
+     - MD   < 1440px : tighter rails, everything still visible
+     - MD+  >= 1440px: the default 3-column composition
+
+   Zone 4 collapsing on a narrow window is §10.6.3's own rule ("collapses
+   (width -> 0) ... the canvas gains the space"), applied to the viewport for
+   the same reason it is applied per-route.
+   ========================================================================== */
+
+@media (max-width: 1439px) {
+  .shell__body {
+    grid-template-columns: 236px minmax(0, 1fr) 296px;
+  }
+
+  .zone1 {
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-card);
+  }
+
+  .dash-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dash-cols__side {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .dash-cols__side > * {
+    flex: 1 1 260px;
+  }
+}
+
+@media (max-width: 1279px) {
+  /* The inspector is the only zone that can be dropped without losing
+     navigation or the screen itself. */
+  .shell__body {
+    grid-template-columns: 224px minmax(0, 1fr);
+  }
+
+  .zone4 {
+    display: none;
+  }
+
+  .dash-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kv {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1079px) {
+  .shell__body {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .zone2 {
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  .zone1__brand {
+    font-size: var(--text-body-l);
+  }
+
+  .zone3 {
+    padding: var(--space-md);
+  }
+
+  .screen {
+    gap: var(--space-md);
+  }
+
+  .md-card {
+    padding: var(--space-md);
+  }
+
+  .dash-meter__row {
+    grid-template-columns: 96px minmax(0, 1fr) 84px;
+  }
+
+  .media-grid,
+  .dash-demo__grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  .state-region {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  .kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xs);
+  }
+
+  .kv dd {
+    padding-bottom: var(--space-xs);
+  }
+}
+
+@media (max-width: 899px) {
+  .dash-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dash-cols__side {
+    flex-direction: column;
+  }
+
+  .l1-row__label {
+    display: none;
+  }
+}
+
+/* Short windows (a 1366x768 laptop in a stacked layout): give the canvas the
+   vertical room instead of the decorative padding. */
+@media (max-height: 720px) {
+  .zone1 {
+    padding: var(--space-xs) var(--space-card);
+  }
+
+  .zone2,
+  .zone3,
+  .zone4 {
+    padding-top: var(--space-md);
+    padding-bottom: var(--space-md);
+  }
+
+  .zone3 {
+    padding-bottom: calc(var(--space-card) * 2);
+  }
+}

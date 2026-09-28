@@ -12,6 +12,7 @@ use rusqlite::Connection;
 use std::time::Duration;
 use thiserror::Error;
 
+use crate::core::models::{DeviceCountDto, MediaScope, StatsDto, VaultStatusDto};
 use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
@@ -176,6 +177,101 @@ pub fn check_schema_version(conn: &Connection) -> Result<(), DbError> {
 pub fn needs_migration(conn: &Connection) -> Result<bool, DbError> {
     let found: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     Ok(found < SCHEMA_VERSION)
+}
+
+/// §7.2 `stats(pool, scope) -> StatsDto` — the Dashboard stat cards and the
+/// Zone 4 summary. Scope-aware by construction (§6.6): the only difference
+/// between the two calls is the bound `is_hidden` value, and it is a
+/// **parameter** (§6.5).
+pub fn stats(pool: &SqlitePool, scope: MediaScope) -> Result<StatsDto, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let hidden = scope.hidden_value();
+
+    let totals: (i64, i64, i64, i64, i64, i64, i64, i64) = conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(file_type = 'image'), 0),
+                COALESCE(SUM(file_type = 'video'), 0),
+                COALESCE(SUM(NOT has_metadata), 0),
+                COALESCE(SUM(file_size), 0),
+                COALESCE(SUM(CASE WHEN file_type = 'image' THEN file_size ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN file_type = 'video' THEN file_size ELSE 0 END), 0),
+                COALESCE(SUM(is_hidden), 0)
+         FROM media
+         WHERE is_hidden = ?1",
+        [hidden],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+            ))
+        },
+    )?;
+
+    // `is_hidden` is bound, so a hidden row can never leak into a device count.
+    let mut stmt = conn.prepare(
+        "SELECT device_name, COUNT(*), COALESCE(SUM(file_size), 0)
+         FROM media
+         WHERE is_hidden = ?1 AND device_name IS NOT NULL
+         GROUP BY device_name
+         ORDER BY COUNT(*) DESC, device_name ASC",
+    )?;
+    let top_devices = stmt
+        .query_map([hidden], |row| {
+            Ok(DeviceCountDto {
+                name: row.get(0)?,
+                count: row.get(1)?,
+                bytes: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(StatsDto {
+        total_items: totals.0,
+        images: totals.1,
+        videos: totals.2,
+        no_metadata: totals.3,
+        total_bytes: totals.4,
+        images_bytes: totals.5,
+        videos_bytes: totals.6,
+        hidden: totals.7,
+        device_count: top_devices.len() as i64,
+        top_devices,
+    })
+}
+
+/// §7.2 `vacuum(pool)`: `VACUUM` rewrites the whole file, so it must never run
+/// inside a transaction and must not hold a borrowed connection.
+pub fn vacuum(pool: &SqlitePool) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    conn.execute_batch("VACUUM").map_err(DbError::from)
+}
+
+/// §7.2 `vault_probe(pool)`: is the vault configured at all? Deliberately does
+/// not touch `password_hash` — c4 has no session, c18 owns unlock/hide.
+pub fn vault_probe(pool: &SqlitePool) -> Result<VaultStatusDto, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let configured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM vault_config WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(VaultStatusDto {
+        configured: configured > 0,
+        unlocked: false,
+        has_recovery_hint: false,
+    })
 }
 
 #[cfg(test)]
@@ -400,6 +496,83 @@ mod tests {
             (0, 0),
             "CASCADE only works with foreign_keys ON"
         );
+    }
+
+    fn seed_media(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO media (id, relative_path, thumb_path, file_type, file_size, captured_at, has_metadata, is_hidden, device_name) VALUES
+               ('m1', 'PC/2026/01/01/a.jpg',  'Thumbnails/400/PC/a.webp',  'image', 1000, '2026-01-01 10:00:00', 1, 0, 'PC'),
+               ('m2', 'PC/2026/01/02/b.jpg',  'Thumbnails/400/PC/b.webp',  'image', 2000, '2026-01-02 10:00:00', 0, 0, 'PC'),
+               ('m3', 'iPhone/2026/01/03/c.mov','Thumbnails/400/iPhone/c.webp','video', 3000, NULL,                   1, 0, 'iPhone'),
+               ('m4', 'iPhone/.vault/d.jpg',   'Thumbnails/400/vault/d.webp', 'image', 4000, '2026-01-04 10:00:00', 1, 1, 'iPhone');",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn stats_counts_by_type_and_keeps_sizes_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        let conn = pool.get().unwrap();
+        seed_media(&conn);
+
+        let standard = stats(&pool, MediaScope::Standard).unwrap();
+
+        assert_eq!(standard.total_items, 3, "the hidden row is not in scope");
+        assert_eq!(standard.images, 2);
+        assert_eq!(standard.videos, 1);
+        assert_eq!(standard.no_metadata, 1, "C7: has_metadata = 0");
+        assert_eq!(standard.total_bytes, 6000);
+        assert_eq!(standard.images_bytes, 3000);
+        assert_eq!(standard.videos_bytes, 3000);
+        assert_eq!(standard.hidden, 0, "a hidden row never counts as in-scope");
+        assert_eq!(standard.device_count, 2);
+        assert_eq!(standard.top_devices[0].name, "PC");
+        assert_eq!(standard.top_devices[0].count, 2);
+        assert_eq!(standard.top_devices[0].bytes, 3000);
+    }
+
+    #[test]
+    fn stats_never_interpolates_the_scope_value() {
+        // §6.6: the scope is bound as a parameter, so a vault row cannot leak
+        // into a standard query by any path.
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        let conn = pool.get().unwrap();
+        seed_media(&conn);
+
+        let standard = stats(&pool, MediaScope::Standard).unwrap();
+        let vault = stats(&pool, MediaScope::Vault).unwrap();
+
+        assert_eq!(standard.total_items, 3);
+        assert_eq!(vault.total_items, 1);
+        assert_eq!(vault.images, 1);
+        assert_eq!(vault.total_bytes, 4000);
+        assert!(standard.top_devices.iter().all(|d| d.name != "v1.1"));
+    }
+
+    #[test]
+    fn vault_probe_reports_a_single_configured_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        assert_eq!(
+            vault_probe(&pool).unwrap(),
+            VaultStatusDto {
+                configured: false,
+                unlocked: false,
+                has_recovery_hint: false
+            }
+        );
+
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO vault_config (id, password_hash, recovery_key_hash) VALUES (1, 'h', 'r')",
+            [],
+        )
+        .unwrap();
+        let status = vault_probe(&pool).unwrap();
+        assert!(status.configured);
+        assert!(!status.unlocked, "c4 has no session; c18 owns unlock");
     }
 
     #[test]

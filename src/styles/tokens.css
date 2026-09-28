@@ -84,6 +84,12 @@
   --space-card: 24px;
   --space-section: 48px;
   --space-gap: 24px;
+  /* The 4-step inner scale. Every padding in shell.css uses these, so the
+     rhythm is one scale instead of magic numbers. */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-nav: 16px;
   --hit-target: 44px;
   --icon-btn: 40px;
   --fab-size: 56px;

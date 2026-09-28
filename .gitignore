@@ -10,13 +10,22 @@ node_modules/
 /src-tauri/target/
 /target/
 
-# Runtime portable tree. In dev the repo root IS the portable root (PLAN.md 4.4),
-# so these are data, not source. Root-anchored so src/app/ and friends are kept.
+# Runtime portable tree. In dev the repo root IS the portable root, so these are
+# data, not source. Root-anchored so src/app/ and friends are kept.
 /App/
 /Database/
 /Thumbnails/
 /Media/
 /.vault/
+
+# Working docs + frozen IA reference: personal to the dev machine, deliberately
+# untracked and purged from the pushed history (human instruction 2026-09-28).
+# .docs-backup/ is a safety copy of PLAN.md — if a rewrite or a `git clean -xdf`
+# ever takes the real one, restore it from there.
+/PLAN.md
+/AGENTS.md
+/mockup/
+/.docs-backup/
 
 # logs / os
 *.log

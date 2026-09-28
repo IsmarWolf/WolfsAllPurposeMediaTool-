@@ -1,4 +1,5 @@
 @import './tokens.css';
+@import './shell.css';
 
 @tailwind base;
 @tailwind components;
@@ -12,6 +13,17 @@
 
   body {
     @apply m-0 min-h-screen bg-bg text-fg text-body-m antialiased;
+  }
+
+  /* §10.6.3 — the shell owns the viewport and each zone scrolls on its own, so
+     the page itself must never scroll (that produced a second scrollbar and
+     walked the nav off the top). */
+  #root {
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
   }
 
   :focus-visible {

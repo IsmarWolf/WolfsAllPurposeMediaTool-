@@ -70,6 +70,10 @@ pub enum PathError {
     ForeignVolume(String),
     #[error("path is the portable root itself")]
     IsRoot,
+    /// The portable root itself is not a usable directory (a file sits there, or
+    /// it cannot be written). Added in c4: the degraded boot needs to report it.
+    #[error("portable root is not a writable directory: {0}")]
+    RootNotADirectory(String),
 }
 
 #[derive(Debug, Clone)]
