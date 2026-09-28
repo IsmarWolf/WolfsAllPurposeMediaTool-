@@ -1,0 +1,30 @@
+# deps
+node_modules/
+
+# frontend build
+dist/
+dist-ssr/
+*.local
+
+# rust / tauri
+src-tauri/target/
+target/
+
+# Runtime portable tree. In dev the repo root IS the portable root (PLAN.md 4.4),
+# so these are data, not source.
+App/
+Database/
+Thumbnails/
+Media/
+.vault/
+
+# logs / os
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store
+
+# editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
