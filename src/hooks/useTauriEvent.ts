@@ -1,9 +1,11 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState } from 'react'
+import { AppError } from '../lib/errors'
 import { EVENTS } from '../lib/events'
 import { statsGet } from '../lib/ipc'
 import type { RootInfoDto, StatsDto } from '../types/api'
 import { useAsync } from './useAsync'
+import { useToast } from './useContexts'
 
 /** §10.3 `useDashStats()` — the Dashboard numbers, refreshed by `wolfs://db-changed`. */
 export function useDashStats() {
@@ -58,21 +60,25 @@ export function useDbChanged(onChanged: () => void) {
   return useTauriEvent<null>(EVENTS.dbChanged, onChanged)
 }
 
-/** §11.0 `[Z1d]` — the resolved root of this boot. Read once, then displayed. */
+/**
+ * §11.0 `[Z1d]` — the resolved root of this boot. Read once, then displayed.
+ *
+ * An unresolvable root is the degraded-boot case: Zone 1 falls back to "unknown"
+ * and the failure still has to reach the user, so the read goes through the
+ * §10.3 hook and its error goes to the toast (§8.2). A bare `void resolve()`
+ * would leak the rejection to the window and leave the badge as the only clue.
+ */
 export function useRootInfo(resolve: () => Promise<RootInfoDto>) {
-  const [info, setInfo] = useState<RootInfoDto | null>(null)
+  const { data, error } = useAsync<RootInfoDto>(resolve, [resolve])
+  const { pushError } = useToast()
+  const reported = useRef<AppError | null>(null)
 
   useEffect(() => {
-    let alive = true
-    void resolve().then((next) => {
-      if (alive) {
-        setInfo(next)
-      }
-    })
-    return () => {
-      alive = false
+    if (error && error !== reported.current) {
+      reported.current = error
+      pushError(error)
     }
-  }, [resolve])
+  }, [error, pushError])
 
-  return info
+  return data
 }

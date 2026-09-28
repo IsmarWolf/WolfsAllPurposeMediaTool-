@@ -28,6 +28,16 @@ export type ToastContextValue = {
   dismiss: (id: number) => void
   /** Maps an `AppError` to its i18n key + pushes it, unless it is silent (§8.2). */
   pushError: (error: AppError) => void
+  /**
+   * §8.2: the user-visible text of an error, already translated.
+   *
+   * A component that renders an error must call THIS and never
+   * `error.i18nKey ?? error.detail`: the former is a key (so it has to reach
+   * `t`), and the latter is the backend's technical detail. Every surface
+   * needed its own `t(error.i18nKey ?? ...)`, and Settings forgot the `t` —
+   * which is how a raw `error.E_DB` could reach the screen.
+   */
+  errorText: (error: AppError) => string
 }
 
 export const I18nContext = createContext<I18nContextValue | null>(null)

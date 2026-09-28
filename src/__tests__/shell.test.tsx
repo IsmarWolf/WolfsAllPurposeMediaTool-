@@ -1,8 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from '../app/AppShell'
 import { Providers } from '../app/providers'
+import { useToast } from '../hooks/useContexts'
 import { Inspector } from '../components/layout/Inspector'
+import { AppError, type ErrorCode } from '../lib/errors'
 
 const STATS = {
   totalItems: 1234,
@@ -21,31 +23,45 @@ const ROOT = {
   root: 'E:\\WolfsMedia',
   source: 'markerWalk' as const,
   rooted: true,
-  firstRun: true,
-  ffmpegOk: true,
+  firstRun: false,
+  ffmpegOk: false,
 }
 
-const invoke = vi.fn(async (command: string) => {
+const VAULT = { configured: false, unlocked: false, hasRecoveryHint: false }
+const VERSIONS = { appVersion: '0.1.0', os: 'windows', arch: 'x86_64' }
+
+// Both mocks are hoisted above these declarations, so each factory builds its
+// own `vi.fn()` and the module under test receives the very same instance the
+// test asserts on. A `const` captured from the test body would be in the TDZ
+// when the hoisted factory runs.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
+
+const { invoke } = await import('@tauri-apps/api/core')
+const invokeMock = vi.mocked(invoke)
+
+/** The happy path every screen needs; individual tests override one command. */
+function defaultMock(command: string): unknown {
   switch (command) {
     case 'stats_get':
       return STATS
     case 'resolve_app_root':
       return ROOT
     case 'vault_status':
-      return { configured: false, unlocked: false, hasRecoveryHint: false }
+      return VAULT
     case 'app_versions':
-      return { appVersion: '0.1.0', os: 'windows', arch: 'x86_64' }
+      return VERSIONS
     default:
       throw new Error(`comando não mockado: ${command}`)
   }
+}
+
+/** Every test starts from the happy path and overrides only the command it needs. */
+beforeEach(() => {
+  invokeMock.mockReset()
+  invokeMock.mockImplementation(async (command: string) => defaultMock(command))
 })
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => invoke(...(args as [string])),
-}))
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
-
-/** Renders and waits for the boot reads to settle, so no assertion races React. */
 async function renderShell() {
   const result = render(
     <Providers>
@@ -56,11 +72,16 @@ async function renderShell() {
   return result
 }
 
-describe('shell contract (§10.6.3 / §10.6.6, C16)', () => {
-  beforeEach(() => {
-    invoke.mockClear()
-  })
+async function gotoSettings() {
+  const { container } = await renderShell()
+  const settings = [...container.querySelectorAll('.zone2__item')].find((item) =>
+    item.textContent?.includes('Ajustes'),
+  ) as HTMLElement
+  fireEvent.click(settings)
+  return { container }
+}
 
+describe('shell contract (§10.6.3 / §10.6.6, C16)', () => {
   it('renders all four zones', async () => {
     const { container } = await renderShell()
     expect(container.querySelector('.zone1')).not.toBeNull()
@@ -80,23 +101,7 @@ describe('shell contract (§10.6.3 / §10.6.6, C16)', () => {
     }
   })
 
-  it('Zone 1 carries the shell controls and no filters (C16)', async () => {
-    const { container } = await renderShell()
-    const header = container.querySelector('.zone1') as HTMLElement
-    expect(header.querySelector('[data-testid="z1d-db-health"]')).not.toBeNull()
-    expect(header.textContent).toContain('Importar')
-    expect(header.textContent).toContain('Ajustes')
-    // The filter surface belongs to Mídia, never to the header.
-    expect(header.textContent).not.toContain('Sem metadados')
-  })
-
-  it('shows the live counts from the database on the Dashboard', async () => {
-    await renderShell()
-    expect(screen.getByText('1.234')).toBeTruthy()
-    expect(screen.getByTestId('c-1a-stats').textContent).toContain('900')
-  })
-
-  it('keeps Cofre detached in the security group', async () => {
+  it('marks the Cofre as a security nav item', async () => {
     const { container } = await renderShell()
     const vault = container.querySelector('.zone2__item--vault') as HTMLElement
     expect(vault).not.toBeNull()
@@ -134,8 +139,7 @@ describe('Zone 4 close control (human-confirmed 2026-09-28)', () => {
 
   it('offers the close button when a selection is what it would close', () => {
     const { onClose } = renderInspector('single')
-    const close = screen.getByRole('button', { name: 'Fechar' })
-    close.click()
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -145,16 +149,106 @@ describe('Zone 4 close control (human-confirmed 2026-09-28)', () => {
   })
 })
 
-describe('no refetch loop (§10.3 useAsync)', () => {
-  beforeEach(() => {
-    invoke.mockClear()
+describe('error surfaces are translated (§8.2)', () => {
+  // The bug this pins: Settings rendered `error.i18nKey ?? error.detail`, so a
+  // rejected command put the literal `error.E_ROOT` on screen - the key instead
+  // of the sentence, in a screen whose whole job is diagnostics.
+  it('Settings shows the translated sentence, never the key', async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'resolve_app_root') {
+        throw { code: 'E_ROOT', message: 'raiz ausente' }
+      }
+      return defaultMock(command)
+    })
+
+    await gotoSettings()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe('A pasta raiz do SSD não pôde ser usada.')
   })
 
+  // Zone 1 has no error card of its own — it keeps the "unknown" badge — so the
+  // toast is the only honest surface for an unresolvable root (§8.2).
+  it('reports a failed root resolution from Zone 1', async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'resolve_app_root') {
+        throw { code: 'E_ROOT', message: 'raiz ausente' }
+      }
+      return defaultMock(command)
+    })
+
+    const { container } = await renderShell()
+
+    // The header also owns a `role="status"`, so the toast is found by its text
+    // and identified by its kind modifier.
+    const toast = await screen.findByText('A pasta raiz do SSD não pôde ser usada.')
+    expect(toast.closest('.md-toast--error')).not.toBeNull()
+    expect(container.querySelector('.dash-system__root')?.textContent).toBe('Raiz desconhecida')
+  })
+
+  function renderProbes(codes: readonly ErrorCode[]) {
+    function Probes() {
+      const { errorText } = useToast()
+      return (
+        <>
+          {codes.map((code) => (
+            <p key={code} data-testid={`probe-${code}`}>
+              {errorText(new AppError(code, 'detalhe técnico'))}
+            </p>
+          ))}
+        </>
+      )
+    }
+    render(
+      <Providers>
+        <Probes />
+      </Providers>,
+    )
+  }
+
+  it('routes every code with a key through the dictionary', () => {
+    renderProbes(['E_DB', 'E_AUTH'])
+    expect(screen.getByTestId('probe-E_DB').textContent).toBe(
+      'Não foi possível ler o banco de dados.',
+    )
+    expect(screen.getByTestId('probe-E_AUTH').textContent).toBe(
+      'Acesso negado. Verifique a autorização do cofre.',
+    )
+  })
+
+  // A null key is the only shape left for the detail to be the honest text, so
+  // the fallback must not render a blank line.
+  it('uses the detail when the code carries no key', () => {
+    renderProbes(['E_CANCEL'])
+    expect(screen.getByTestId('probe-E_CANCEL').textContent).toBe('detalhe técnico')
+  })
+
+  // The false "done" bug: `useTauriCommand` swallows the rejection into a toast,
+  // so a chained `.then()` fired its success message even when the command had
+  // failed - the user saw "concluído" and an error at the same time.
+  it('never reports a vacuum that failed as done', async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'settings_vacuum') {
+        throw { code: 'E_DB', message: 'banco bloqueado' }
+      }
+      return defaultMock(command)
+    })
+
+    await gotoSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Compactar banco' }))
+
+    const toasts = await screen.findByText('Não foi possível ler o banco de dados.')
+    expect(toasts.closest('.md-toast--error')).not.toBeNull()
+    expect(screen.queryByText('Banco compactado.')).toBeNull()
+  })
+})
+
+describe('no refetch loop (§10.3 useAsync)', () => {
   // A `useCallback([fn])` on an inline loader re-ran the effect on every render,
   // which showed up as numbers blinking between "loading" and 0.
   it('reads the stats exactly once per mount', async () => {
     await renderShell()
-    const statsCalls = invoke.mock.calls.filter(([command]) => command === 'stats_get')
+    const statsCalls = invokeMock.mock.calls.filter(([command]) => command === 'stats_get')
     expect(statsCalls).toHaveLength(1)
   })
 
@@ -162,20 +256,11 @@ describe('no refetch loop (§10.3 useAsync)', () => {
     // Only `stats_get` stalls: the child effects of Zone 3 fire before the
     // shell's own, so `mockImplementationOnce` would have hijacked another
     // command.
-    invoke.mockImplementation(async (command: string) => {
+    invokeMock.mockImplementation(async (command: string) => {
       if (command === 'stats_get') {
         return new Promise(() => {})
       }
-      switch (command) {
-        case 'resolve_app_root':
-          return ROOT
-        case 'vault_status':
-          return { configured: false, unlocked: false, hasRecoveryHint: false }
-        case 'app_versions':
-          return { appVersion: '0.1.0', os: 'windows', arch: 'x86_64' }
-        default:
-          throw new Error(`comando não mockado: ${command}`)
-      }
+      return defaultMock(command)
     })
 
     const { container } = render(

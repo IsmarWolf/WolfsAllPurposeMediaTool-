@@ -48,6 +48,16 @@ export function Providers({ children }: { children: ReactNode }) {
     [locale],
   )
 
+  /**
+   * §8.2: one place that turns an `AppError` into user-visible text. A silent
+   * code has no UI at all, so this is never called for it; a null key still
+   * resolves to the detail rather than a blank line.
+   */
+  const errorText = useCallback(
+    (error: AppError) => (error.i18nKey === null ? error.detail : i18n.t(error.i18nKey)),
+    [i18n],
+  )
+
   const dismiss = useCallback((id: number) => {
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
@@ -64,15 +74,16 @@ export function Providers({ children }: { children: ReactNode }) {
       toasts,
       push,
       dismiss,
+      errorText,
       pushError: (error: AppError) => {
         // §8.2: a cancelled job is silent — no toast at all.
         if (error.isSilent) {
           return
         }
-        push('error', error.i18nKey ?? error.detail)
+        push('error', errorText(error))
       },
     }
-  }, [toasts, dismiss])
+  }, [toasts, dismiss, errorText])
 
   return (
     <SkinContext.Provider value={{ skin: 'md3' }}>

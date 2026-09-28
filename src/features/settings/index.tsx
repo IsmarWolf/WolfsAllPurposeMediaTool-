@@ -17,7 +17,7 @@ import type { AppVersionsDto, RecalcRootDto, RootInfoDto } from '../../types/api
  */
 export function SettingsScreen() {
   const { t } = useI18n()
-  const { push } = useToast()
+  const { push, errorText } = useToast()
 
   const root = useAsync<RootInfoDto>(() => resolveAppRoot(), [])
   const versions = useAsync<AppVersionsDto>(() => appVersions(), [])
@@ -43,7 +43,9 @@ export function SettingsScreen() {
 
         {root.error ? (
           <p className="md-error__message" role="alert">
-            {root.error.i18nKey ?? root.error.detail}
+            {/* `errorText`, not `i18nKey ?? detail`: the key still has to reach
+                `t`, and the detail is technical text (§8.2). */}
+            {errorText(root.error)}
           </p>
         ) : null}
 
@@ -95,7 +97,15 @@ export function SettingsScreen() {
             type="button"
             className="md-btn md-btn--tonal"
             disabled={vacuum.busy}
-            onClick={() => void vacuum.run().then(() => push('success', t('settings.vacuumDone')))}
+            onClick={() =>
+              void vacuum.run().then((ok) => {
+                // The command's failure is already a toast; claiming "done" on
+                // top of it would be a second, contradictory message.
+                if (ok) {
+                  push('success', t('settings.vacuumDone'))
+                }
+              })
+            }
           >
             {vacuum.busy ? t('common.working') : t('settings.vacuum')}
           </button>

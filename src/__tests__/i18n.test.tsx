@@ -27,7 +27,9 @@ describe('i18n', () => {
     expect(screen.getByTestId('known').textContent).toBe('Mídia')
   })
 
-  // §15: the fallback chain must end at the key, never at a blank.
+  // §15: the fallback chain must end at the key, never at a blank. This is the
+  // behaviour of `t` itself - it is NOT the contract for rendering an error:
+  // an error surface must translate the key, not print it.
   it('falls back to the key itself when nothing is translated', () => {
     render(
       <Providers>

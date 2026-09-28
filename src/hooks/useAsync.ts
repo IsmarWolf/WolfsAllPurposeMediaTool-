@@ -62,6 +62,11 @@ export function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[] = [])
  * §10.3 `useTauriCommand(fn, args)` — an imperative typed await whose error
  * mapping to a toast happens here, so no screen repeats the try/catch.
  *
+ * `run` resolves to whether the command actually succeeded: it never rejects,
+ * because the error is already a toast. A caller that chains its own
+ * "done" message therefore has to check the flag — otherwise a failed
+ * command reports success on top of its own error.
+ *
  * A second invocation while one is in flight is dropped: the busy state of
  * §10.6.4 must be visible, and a double click must not run the command twice.
  */
@@ -71,16 +76,18 @@ export function useTauriCommand<Args extends unknown[]>(command: (...args: Args)
   const inFlight = useRef(false)
 
   const run = useCallback(
-    async (...args: Args) => {
+    async (...args: Args): Promise<boolean> => {
       if (inFlight.current) {
-        return
+        return false
       }
       inFlight.current = true
       setBusy(true)
       try {
         await command(...args)
+        return true
       } catch (raw) {
         pushError(toAppError(raw))
+        return false
       } finally {
         inFlight.current = false
         setBusy(false)
