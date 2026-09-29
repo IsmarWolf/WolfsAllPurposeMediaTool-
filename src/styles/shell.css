@@ -267,6 +267,50 @@
   color: var(--md-on-surface-variant);
 }
 
+/* The gutter tab: the way back to Zone 4 on a window too narrow for the three
+   columns (human-confirmed 2026-09-29). It is a tab on the right edge, not a
+   button in another zone, because the thing it opens belongs to that edge — and
+   `shell.css` hides it from 1280px up, where the panel is already a column. A
+   label, not a bare glyph: the icon is `aria-hidden` so the name is read once. */
+.zone4__toggle {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-btn);
+  height: var(--fab-size);
+  font-size: var(--text-title-l);
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-ctr-high);
+  border: 0;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  box-shadow: var(--shadow-rest);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.zone4__toggle:hover {
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-ctr-low);
+  box-shadow: var(--shadow-hover);
+}
+
+.zone4__toggle:disabled {
+  color: var(--md-outline);
+  box-shadow: none;
+  cursor: default;
+}
+
+.zone4__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drawer);
+  background-color: var(--md-scrim);
+}
+
 /* ---------------------------------------------------------------- Zone 5 */
 
 .zone5 {
@@ -729,13 +773,16 @@
    The layout is fluid between these, and the breakpoints are about *content*,
    not about device names:
      - XS   < 1080px : the three columns no longer fit side by side
-     - SM   < 1280px : the inspector is the first thing to go
+     - SM   < 1280px : the inspector stops being a column and becomes a drawer
      - MD   < 1440px : tighter rails, everything still visible
      - MD+  >= 1440px: the default 3-column composition
 
-   Zone 4 collapsing on a narrow window is §10.6.3's own rule ("collapses
-   (width -> 0) ... the canvas gains the space"), applied to the viewport for
-   the same reason it is applied per-route.
+   Zone 4 giving up its column on a narrow window is §10.6.3's own rule
+   ("collapses (width -> 0) ... the canvas gains the space"), applied to the
+   viewport for the same reason it is applied per-route — with one addition
+   (human-confirmed 2026-09-29): collapsing to *nothing* left the inspector with
+   no way back, so from SM down it is an overlay drawer behind a gutter tab
+   instead of `display: none`.
    ========================================================================== */
 
 @media (max-width: 1439px) {
@@ -764,13 +811,47 @@
 
 @media (max-width: 1279px) {
   /* The inspector is the only zone that can be dropped without losing
-     navigation or the screen itself. */
+     navigation or the screen itself — but "dropped" is not "unreachable"
+     (human-confirmed 2026-09-29): below 1280px it becomes an overlay drawer
+     opened by the gutter tab, which the desktop pattern (a second side bar on an
+     edge) makes obvious without a tutorial. The decision about which size class
+     applies stays here, in CSS, and not in JS (§10.6.3). */
   .shell__body {
     grid-template-columns: 224px minmax(0, 1fr);
   }
 
   .zone4 {
-    display: none;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-modal);
+    width: min(360px, 92vw);
+    /* A sliding panel is a *displacement*: it starts off-screen, so
+       `visibility` (not just `transform`) is what keeps the closed panel out of
+       the tab order and out of the accessibility tree. */
+    visibility: hidden;
+    transform: translateX(100%);
+    box-shadow: var(--shadow-modal);
+    transition:
+      transform var(--dur-standard) var(--ease-emphasized),
+      visibility 0s linear var(--dur-standard);
+  }
+
+  .zone4--drawer-open {
+    visibility: visible;
+    transform: translateX(0);
+    transition:
+      transform var(--dur-standard) var(--ease-emphasized),
+      visibility 0s;
+  }
+
+  /* `outline: none` is deliberate and local: the drawer receives focus on open
+     (so Escape reaches it and the next Tab stays inside the overlay), and a
+     programmatic focus on a container is not something to draw a ring around.
+     Every interactive control inside keeps its own visible focus. */
+  .zone4--drawer-open:focus {
+    outline: none;
   }
 
   .dash-stats {
@@ -779,6 +860,14 @@
 
   .kv {
     grid-template-columns: 168px minmax(0, 1fr);
+  }
+}
+
+/* From 1280px the panel is a column again and the tab has nothing to open. */
+@media (min-width: 1280px) {
+  .zone4__toggle,
+  .zone4__scrim {
+    display: none;
   }
 }
 

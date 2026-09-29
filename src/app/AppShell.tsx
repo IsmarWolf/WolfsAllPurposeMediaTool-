@@ -30,12 +30,34 @@ export function AppShell() {
 
   const navigate = useCallback((next: Route) => setRoute(next), [])
 
+  // The Zone 4 drawer (below 1280px, human-confirmed 2026-09-29) is state the
+  // *shell* owns, not the panel: §10.6.5 makes `Esc` "clear selection or close
+  // the topmost overlay", so the shortcut map below has to know whether the drawer
+  // is up, and the map is the shell's. The state carries its route with it and a
+  // stale one is ignored, so navigating away closes the overlay *derived from the
+  // render* instead of through a `setState` inside an effect (which would also
+  // cost an extra render). Coming back to an inspector that is still open after a
+  // detour through Settings is a state nobody asked for.
+  const [drawer, setDrawer] = useState<{ route: Route; open: boolean }>({ route, open: false })
+  const drawerOpen = drawer.open && drawer.route === route
+  const setDrawerOpen = useCallback((open: boolean) => setDrawer({ route, open }), [route])
+  const closeDrawer = useCallback(() => setDrawerOpen(false), [setDrawerOpen])
+
   const shortcuts = useMemo<Shortcut[]>(
     () => [
       { key: 'a', ctrl: true, run: () => selection.clear() },
-      { key: 'escape', run: () => selection.clear() },
+      {
+        key: 'escape',
+        run: () => {
+          if (drawerOpen) {
+            closeDrawer()
+          } else {
+            selection.clear()
+          }
+        },
+      },
     ],
-    [selection],
+    [selection, drawerOpen, closeDrawer],
   )
   useShortcuts(shortcuts)
 
@@ -79,7 +101,13 @@ export function AppShell() {
           {route === 'vault' ? <VaultScreen /> : null}
         </main>
 
-        <Inspector mode={inspectorMode} count={selection.count} onClose={selection.clear} />
+        <Inspector
+          mode={inspectorMode}
+          count={selection.count}
+          onClose={selection.clear}
+          drawerOpen={drawerOpen}
+          onDrawerChange={setDrawerOpen}
+        />
       </div>
 
       <BulkToolbar count={selection.count} onClear={selection.clear} />

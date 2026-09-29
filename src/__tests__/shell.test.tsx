@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from '../app/AppShell'
 import { Providers } from '../app/providers'
@@ -146,6 +147,104 @@ describe('Zone 4 close control (human-confirmed 2026-09-28)', () => {
   it('still names the mode it is showing', () => {
     renderInspector('summary')
     expect(screen.getByRole('heading', { name: 'Resumo' })).toBeTruthy()
+  })
+})
+
+describe('Zone 4 as a drawer below 1280px (human-confirmed 2026-09-29)', () => {
+  // The bug this pins: below 1280px `.zone4` was `display: none` and nothing in
+  // the app could bring it back, so the inspector simply did not exist on a
+  // narrow window. It is now an overlay drawer behind a gutter tab; the *size
+  // class* stays in `shell.css` (§10.6.3), and JS only carries the state.
+  function ControlledInspector({ mode }: { mode: 'summary' | 'single' | 'bulk' }) {
+    const [open, setOpen] = useState(false)
+    return (
+      <Inspector
+        mode={mode}
+        count={1}
+        onClose={vi.fn()}
+        drawerOpen={open}
+        onDrawerChange={setOpen}
+      />
+    )
+  }
+
+  function renderDrawer(mode: 'summary' | 'single' | 'bulk' = 'single') {
+    const result = render(
+      <Providers>
+        <ControlledInspector mode={mode} />
+      </Providers>,
+    )
+    return { ...result, toggle: () => screen.getByRole('button', { name: /inspetor/i }) }
+  }
+
+  it('exposes a labelled control that reports whether the drawer is open', () => {
+    const { toggle } = renderDrawer()
+    const tab = toggle()
+    expect(tab.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(tab)
+    expect(tab.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('moves focus into the drawer and gives it back on close', () => {
+    const { toggle } = renderDrawer()
+    const tab = toggle()
+
+    fireEvent.click(tab)
+    const panel = document.querySelector('.zone4--drawer-open') as HTMLElement
+    expect(panel.getAttribute('role')).toBe('dialog')
+    expect(panel.getAttribute('aria-modal')).toBe('true')
+    expect(document.activeElement).toBe(panel)
+
+    fireEvent.click(tab)
+    expect(document.activeElement).toBe(tab)
+  })
+
+  it('leaves the panel a plain region while it is a column, not a dialog', () => {
+    // `role="dialog"` at >= 1280px would trap focus inside a panel the user never
+    // opened as an overlay.
+    render(
+      <Providers>
+        <Inspector mode="single" count={1} onClose={vi.fn()} />
+      </Providers>,
+    )
+    const panel = document.querySelector('.zone4') as HTMLElement
+    expect(panel.getAttribute('role')).toBeNull()
+    expect(panel.className).not.toContain('zone4--drawer-open')
+  })
+
+  it('closes on a scrim click, and the scrim is not in the a11y tree', () => {
+    const { container, toggle } = renderDrawer()
+    fireEvent.click(toggle())
+    const scrim = container.querySelector('.zone4__scrim') as HTMLElement
+    expect(scrim.getAttribute('aria-hidden')).toBe('true')
+
+    fireEvent.click(scrim)
+    expect(container.querySelector('.zone4--drawer-open')).toBeNull()
+  })
+
+  // A tab that opens a panel with nothing to inspect is a dead control, and the
+  // summary mode is exactly that today (its totals arrive in c8).
+  it('is disabled when the panel has nothing to inspect', () => {
+    const { toggle } = renderDrawer('summary')
+    expect((toggle() as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('renders no drawer control on a screen with no inspector at all', () => {
+    // §10.6.3: Backup and Settings have no selection model, so Zone 4 collapses
+    // to width 0 and there is nothing for a tab to open.
+    render(
+      <Providers>
+        <Inspector
+          mode="none"
+          count={0}
+          onClose={vi.fn()}
+          drawerOpen={false}
+          onDrawerChange={vi.fn()}
+        />
+      </Providers>,
+    )
+    expect(document.querySelector('.zone4')).toBeNull()
+    expect(screen.queryByRole('button', { name: /inspetor/i })).toBeNull()
   })
 })
 

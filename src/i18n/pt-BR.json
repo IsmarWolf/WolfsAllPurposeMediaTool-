@@ -119,6 +119,8 @@
   "inspector.singleComing": "Prévia e edição rápida chegam no c8.",
   "inspector.bulkComing": "O editor em massa chega no c8.",
   "inspector.bulkCount": "{count} itens selecionados",
+  "inspector.open": "Abrir inspetor",
+  "inspector.closeDrawer": "Fechar inspetor",
 
   "bulk.label": "Ações em massa",
   "bulk.count": "{count} selecionados",

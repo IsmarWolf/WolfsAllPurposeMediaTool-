@@ -119,6 +119,8 @@
   "inspector.singleComing": "Preview and quick edit land in c8.",
   "inspector.bulkComing": "The bulk editor lands in c8.",
   "inspector.bulkCount": "{count} items selected",
+  "inspector.open": "Open inspector",
+  "inspector.closeDrawer": "Close inspector",
 
   "bulk.label": "Bulk actions",
   "bulk.count": "{count} selected",
