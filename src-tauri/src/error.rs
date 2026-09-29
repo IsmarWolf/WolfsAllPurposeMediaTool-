@@ -9,6 +9,7 @@ use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 use crate::core::db::DbError;
+use crate::core::exif::ExifError;
 use crate::core::layout::LayoutError;
 use crate::core::paths::PathError;
 
@@ -82,6 +83,19 @@ pub struct SpawnError {
     pub source: std::io::Error,
 }
 
+/// §7.4 added these: an ffmpeg that will not start is the `E_FFMPEG` the
+/// §8.2 table already described (toast + disable the video/HEIC paths), and a
+/// file that cannot be read belongs to the job that was walking it, not to the
+/// root or the DB.
+impl From<ExifError> for AppError {
+    fn from(err: ExifError) -> Self {
+        match err {
+            ExifError::Spawn(_) => AppError::Ffmpeg(err.to_string()),
+            ExifError::Read { .. } => AppError::Ingest(err.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +123,23 @@ mod tests {
             serde_json::to_string(&AppError::Db(DbError::Pool("sem conexão".into()))).unwrap();
         assert!(json.contains(r#""code":"E_DB""#), "{json}");
         assert!(json.contains("sem conexão"), "{json}");
+    }
+
+    /// §7.4: the two conditions `exif::extract` reports are the ffmpeg of the
+    /// §8.2 table and the job that was walking the file.
+    #[test]
+    fn exif_errors_map_to_their_codes() {
+        let missing = ExifError::Spawn(SpawnError {
+            program: "ffmpeg.exe".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "nao existe"),
+        });
+        assert_eq!(AppError::from(missing).code(), "E_FFMPEG");
+
+        let unreadable = ExifError::Read {
+            path: "Media/PC/foto.jpg".into(),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "travado"),
+        };
+        let json = serde_json::to_string(&AppError::from(unreadable)).unwrap();
+        assert!(json.contains(r#""code":"E_INGEST""#), "{json}");
     }
 }
