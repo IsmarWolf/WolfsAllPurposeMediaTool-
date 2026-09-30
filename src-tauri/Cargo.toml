@@ -20,6 +20,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "BackupManager"
 path = "src/main.rs"
 
+# PLAN §7.5: the geonames producer. A maintainer runs it once, offline, and
+# `required-features` keeps it out of every normal build *and* out of the
+# portable deploy - the app never needs to write an index. The matching writer
+# lives in `core::geocode::writer` behind the same feature, so `cargo build`
+# compiles neither the tool nor the format code.
+[[bin]]
+name = "gen-geonames"
+path = "tools/gen-geonames.rs"
+required-features = ["tooling"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.0", features = [] }
 
@@ -29,6 +39,9 @@ tauri-build = { version = "2.7.0", features = [] }
 # Tauri's own wording and its warning is the reason it is here at all.
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+# §7.5: the offline cities-index producer and the format writer. Never on for
+# the app; see the `[[bin]] gen-geonames` note above.
+tooling = []
 
 [dependencies]
 serde_json = "1.0"

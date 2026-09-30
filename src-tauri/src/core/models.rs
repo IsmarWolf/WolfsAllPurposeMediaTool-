@@ -72,7 +72,27 @@ pub struct VaultStatusDto {
     pub has_recovery_hint: bool,
 }
 
-/// §8.1 `resolve_app_root` + what Settings → Origem shows (§5.6).
+/// §7.5: the offline reverse-geocode answer for one media item.
+///
+/// `latitude`/`longitude` are the **media's** own coordinates, not the city's
+/// centroid — the `locations` row is keyed by `media_id` (§6.1), so this pair is
+/// the position of the photo. See the c7 decision in PLAN §7.5.1.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GeoDto {
+    pub city: String,
+    /// GeoNames `admin1` as the **code** the index was built with (`27` for São
+    /// Paulo), because §7.5.1 decision 12 keeps codes over names on the SSD. A
+    /// country with no admin1 round-trips as empty, never as a missing city.
+    pub state: String,
+    /// ISO country code (`BR`), resolved to a name only if a future index
+    /// builder ships the country table alongside it.
+    pub country: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+/// §8.1 `root_info` + what Settings → Origem shows (§5.6).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RootInfoDto {
@@ -149,6 +169,26 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_string(&source).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn geo_dto_is_camel_case_and_keeps_the_media_point() {
+        // §7.5.1 decision 4: the coordinates are the photo's, so the lightbox
+        // can show where the shot was without re-reading the EXIF. The `27` is
+        // the admin1 code §7.5.1 decision 12 chose to keep, not a state name.
+        let geo = GeoDto {
+            city: "São Paulo".into(),
+            state: "27".into(),
+            country: "BR".into(),
+            latitude: -23.5105,
+            longitude: -46.6033,
+        };
+        let json = serde_json::to_string(&geo).unwrap();
+        assert!(json.contains(r#""city":"São Paulo""#), "{json}");
+        assert!(json.contains(r#""state":"27""#), "{json}");
+        assert!(json.contains(r#""country":"BR""#), "{json}");
+        assert!(json.contains(r#""latitude":-23.5105"#), "{json}");
+        assert!(json.contains(r#""longitude":-46.6033"#), "{json}");
     }
 
     #[test]
