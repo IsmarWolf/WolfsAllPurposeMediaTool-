@@ -20,9 +20,10 @@ type Props = {
  * §11.1 Dashboard — the telemetry home (C16: no meter, no filter presets, no
  * live data in the sidebar; all of it lives here).
  *
- * C-1a..1d stat cards, C-1f vault mini-card, C-1h primary CTA, C-1i quick
- * actions, C-1j the QA-only state-machine triggers, C-1k the full-width
- * storage & system card.
+ * Numbers only, per the c8 amendment: C-1a..1d stat cards, C-1f vault mini-card,
+ * C-1h primary CTA, C-1j the QA-only state-machine triggers, C-1k the full-width
+ * storage & system card. The old C-1i "Conexões rápidas" card moved to
+ * Backup → Disco local (human-confirmed 2026-09-30).
  */
 export function DashboardScreen({ stats, loading, error, onRetry, resolve, onNavigate }: Props) {
   const { t } = useI18n()
@@ -110,21 +111,6 @@ export function DashboardScreen({ stats, loading, error, onRetry, resolve, onNav
             <Button variant="tonal" onClick={() => onNavigate('vault')}>
               {t('dash.vaultOpen')}
             </Button>
-          </section>
-
-          <section className="md-card" data-testid="c-1i-quick">
-            <h2>{t('dash.quickTitle')}</h2>
-            <div className="md-card__row">
-              <Button variant="tonal" onClick={() => onNavigate('backup')}>
-                {t('dash.quickScanPc')}
-              </Button>
-              <Button variant="tonal" onClick={() => onNavigate('backup')}>
-                {t('dash.quickIphone')}
-              </Button>
-              <Button variant="tonal" onClick={() => onNavigate('media')}>
-                {t('dash.quickThumbs')}
-              </Button>
-            </div>
           </section>
         </div>
       </div>

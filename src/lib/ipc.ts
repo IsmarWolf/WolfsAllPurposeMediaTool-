@@ -8,8 +8,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { toAppError } from './errors'
 import type {
   AppVersionsDto,
+  GeoDto,
   RecalcRootDto,
   RootInfoDto,
+  ScanSummaryDto,
   StatsDto,
   VaultStatusDto,
 } from '../types/api'
@@ -42,3 +44,20 @@ export const settingsVacuum = () => call<void>('settings_vacuum')
 
 /** §8.1 `app_versions` — §11.7 Sistema card. */
 export const appVersions = () => call<AppVersionsDto>('app_versions')
+
+/**
+ * §8.1 `scan_start` — §7.3's scanner. The promise resolves with the final
+ * summary; progress arrives on `wolfs://progress/scan` meanwhile.
+ *
+ * `folder` picks the tree (§7.3.1 c8): absent = the in-place mop-up of
+ * `Media/<device>/`; present = §11.3's Disco-local ingest, copy-only.
+ */
+export const scanStart = (device: string, folder?: string) =>
+  call<ScanSummaryDto>('scan_start', { device, folder })
+
+/** §8.1 `scan_cancel` — §9.3. Idempotent; a running scan ends with `cancelled`. */
+export const scanCancel = () => call<void>('scan_cancel')
+
+/** §8.1 `geo_lookup` — debug/testing only (§7.5.1 decision 8). */
+export const geoLookup = (lat: number, lon: number) =>
+  call<GeoDto | null>('geo_lookup', { lat, lon })

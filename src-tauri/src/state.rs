@@ -16,12 +16,15 @@
 //! the r2d2 handle are both cheap to clone, so [`AppState::snapshot`] hands out
 //! an owned view instead of making every command lock twice.
 
-use std::sync::RwLock;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::core::db::{self, SqlitePool};
+use crate::core::geocode::Geocoder;
 use crate::core::layout::{self, LayoutReport};
 use crate::core::models::RootInfoDto;
 use crate::core::paths::{PathResolver, RootSource};
+use crate::core::scanner::CancelFlag;
 use crate::error::AppError;
 
 /// §9.2 event channels. Background work reaches the UI **only** through these;
@@ -42,6 +45,11 @@ pub mod channels {
 pub struct Snapshot {
     pub resolver: PathResolver,
     pool: Option<SqlitePool>,
+    /// §7.5's index, bound to this root. It is part of the snapshot, not of
+    /// `AppState`, so §5.6 `[Recalcular Raiz]` hands out a geocoder that already
+    /// points at the new `Database/geonames.bin` — a geocoder outliving a moved
+    /// root would keep answering from a file the app no longer has.
+    pub geocoder: Arc<Geocoder>,
     pub ffmpeg_ok: bool,
     pub first_run: bool,
     /// Tree creation failed → the root is not writable (`E_ROOT`).
@@ -79,6 +87,12 @@ impl Snapshot {
 
 pub struct AppState {
     inner: RwLock<Snapshot>,
+    /// §9.3. Outside the `RwLock` on purpose: a scan holds its flag for minutes,
+    /// and a snapshot is cloned on every single command, so a job living in there
+    /// would be copied constantly and could not be flipped from another command.
+    /// `Arc` because the job thread outlives the command that started it and has
+    /// to give the slot back when it ends.
+    jobs: Arc<JobRegistry>,
 }
 
 impl AppState {
@@ -94,11 +108,16 @@ impl AppState {
 
         Self {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
+            jobs: Arc::new(JobRegistry::default()),
         }
     }
 
     pub fn snapshot(&self) -> Snapshot {
         self.inner.read().expect("AppState lock poisoned").clone()
+    }
+
+    pub fn jobs(&self) -> Arc<JobRegistry> {
+        Arc::clone(&self.jobs)
     }
 
     /// What Settings → Origem and `[Z1d]` show (§5.6, §11.0).
@@ -166,12 +185,100 @@ impl Snapshot {
         };
 
         Snapshot {
-            resolver,
+            resolver: resolver.clone(),
             pool,
+            geocoder: Arc::new(Geocoder::new(resolver.geonames_path())),
             ffmpeg_ok,
             first_run,
             root_error,
             db_error,
+        }
+    }
+}
+
+/// What a job does, so two scans cannot fight over one tree and a cancel lands on
+/// the right flag. One slot per kind: §9.2's channels carry no job id, so the UI
+/// can only ever watch one job of each kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum JobKind {
+    Scan,
+    Thumbs,
+    IngestUsb,
+    IngestWifi,
+}
+
+/// §9.3: the cancel flag lives here, keyed by kind, and is flipped by a *different*
+/// command than the one that started the job.
+#[derive(Default)]
+pub struct JobRegistry {
+    running: Mutex<HashMap<JobKind, Job>>,
+}
+
+/// A claimed slot. The `CancelFlag` is an `Arc`, so the job thread keeps it alive
+/// after the registry entry is gone and a late cancel cannot touch freed memory.
+pub struct Job {
+    id: String,
+    pub flag: CancelFlag,
+}
+
+impl Job {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl JobRegistry {
+    /// Takes the slot for `kind`, or `E_CONFLICT` when it is busy. Claiming
+    /// before spawning is what makes "one scan at a time" true rather than
+    /// best-effort: two clicks cannot both pass.
+    pub fn claim(&self, kind: JobKind) -> Result<Job, AppError> {
+        let mut running = self.running.lock().expect("JobRegistry poisoned");
+        if running.contains_key(&kind) {
+            return Err(AppError::Conflict(format!(
+                "já existe uma operação {:?} em andamento",
+                kind
+            )));
+        }
+        let job = Job {
+            id: uuid::Uuid::new_v4().to_string(),
+            flag: CancelFlag::new(),
+        };
+        running.insert(
+            kind,
+            Job {
+                id: job.id.clone(),
+                flag: job.flag.clone(),
+            },
+        );
+        Ok(job)
+    }
+
+    /// Asks the running job of `kind` to stop. Idempotent and silent when there
+    /// is nothing to stop (§8.2: `E_CANCEL` is never an error the user sees).
+    pub fn cancel(&self, kind: JobKind) -> bool {
+        let running = self.running.lock().expect("JobRegistry poisoned");
+        match running.get(&kind) {
+            Some(job) => {
+                job.flag.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn is_running(&self, kind: JobKind) -> bool {
+        self.running
+            .lock()
+            .expect("JobRegistry poisoned")
+            .contains_key(&kind)
+    }
+
+    /// Frees the slot. Called when the job ends, cancelled or failed, so the next
+    /// click is never refused because of a job that is already gone.
+    pub fn release(&self, kind: JobKind, id: &str) {
+        let mut running = self.running.lock().expect("JobRegistry poisoned");
+        if running.get(&kind).is_some_and(|job| job.id == id) {
+            running.remove(&kind);
         }
     }
 }
@@ -198,6 +305,7 @@ mod tests {
         let pool = db::open(&resolver);
         AppState {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
+            jobs: Arc::new(JobRegistry::default()),
         }
     }
 
@@ -249,5 +357,105 @@ mod tests {
             "a temp tree has no App/bin/ffmpeg.exe, so the badge must be false"
         );
         assert!(state.db_healthy());
+    }
+
+    /// §9.2's channels carry no job id, so the registry is what makes "one scan
+    /// at a time" true. A second click must be refused, not queued.
+    #[test]
+    fn only_one_job_of_a_kind_runs_at_a_time() {
+        let registry = JobRegistry::default();
+
+        let first = registry.claim(JobKind::Scan).unwrap();
+        assert!(registry.is_running(JobKind::Scan));
+        assert!(registry.claim(JobKind::Scan).is_err(), "E_CONFLICT");
+        assert!(
+            registry.claim(JobKind::Thumbs).is_ok(),
+            "a different kind is a different slot"
+        );
+
+        // The flag is shared: the cancel command flips the one the job holds.
+        let seen_by_the_job = first.flag.clone();
+        assert!(registry.cancel(JobKind::Scan));
+        assert!(seen_by_the_job.is_cancelled());
+
+        registry.release(JobKind::Scan, first.id());
+        assert!(!registry.is_running(JobKind::Scan));
+        assert!(
+            registry.claim(JobKind::Scan).is_ok(),
+            "the slot is free again"
+        );
+    }
+
+    /// §8.2: `E_CANCEL` is never an error the user sees, and the cancel button can
+    /// be pressed twice, or with nothing running at all.
+    #[test]
+    fn cancelling_nothing_is_not_an_error() {
+        let registry = JobRegistry::default();
+        assert!(!registry.cancel(JobKind::Scan), "no job, nothing flipped");
+    }
+
+    /// A job that ended on its own must not be able to free a slot that a later
+    /// job already took: the id is what makes `release` safe.
+    #[test]
+    fn a_stale_job_cannot_free_someone_elses_slot() {
+        let registry = JobRegistry::default();
+        let first = registry.claim(JobKind::Scan).unwrap();
+        registry.release(JobKind::Scan, first.id());
+        let second = registry.claim(JobKind::Scan).unwrap();
+
+        registry.release(JobKind::Scan, first.id());
+
+        assert!(
+            registry.is_running(JobKind::Scan),
+            "the new job keeps its slot"
+        );
+        assert_ne!(first.id(), second.id());
+    }
+
+    /// §5.6: the geocoder is bound to the root it was built for, so a root that
+    /// moved cannot keep answering from the old volume's `Database/geonames.bin`.
+    ///
+    /// Asserted through what the user would see — the city, or its absence — and
+    /// without touching the process environment, which §5.8 reads once and which
+    /// no test may mutate in parallel.
+    #[test]
+    fn the_geocoder_is_bound_to_its_own_root() {
+        use crate::core::geocode::{City, CityWriter};
+
+        fn index_with(city: &str) -> Vec<u8> {
+            let mut writer = CityWriter::new(0);
+            writer.push(City {
+                lat: 42.32,
+                lon: -83.17,
+                population: 100_000,
+                name: city.into(),
+                state: "MI".into(),
+                country: "US".into(),
+            });
+            writer.finish().unwrap()
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let with_index = dir.path().join("com-indice");
+        let without_index = dir.path().join("sem-indice");
+
+        let first = state_at(&with_index);
+        std::fs::write(
+            first.snapshot().resolver.geonames_path(),
+            index_with("Dearborn"),
+        )
+        .unwrap();
+        let second = state_at(&without_index);
+
+        let found = first
+            .snapshot()
+            .geocoder
+            .geocode(42.32, -83.17)
+            .expect("a cidade está no índice deste root");
+        assert_eq!(found.city, "Dearborn");
+        assert!(
+            second.snapshot().geocoder.geocode(42.32, -83.17).is_none(),
+            "o outro root não tem índice, e o geocoder não pode emprestar o de cima"
+        );
     }
 }

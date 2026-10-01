@@ -23,10 +23,17 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // PLAN §11.3 (c8, human 2026-10-01): the one sanctioned native plugin.
+        // It backs ONLY the "Escolher pasta..." button on Backup > Disco local;
+        // everything else in the app stays in-app per §19.1.
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::media::stats_get,
             commands::media::vault_status,
+            commands::media::scan_start,
+            commands::media::scan_cancel,
+            commands::media::geo_lookup,
             commands::settings::resolve_app_root,
             commands::settings::settings_recalc_root,
             commands::settings::settings_reveal_root,

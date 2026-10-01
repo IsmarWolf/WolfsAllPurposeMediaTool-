@@ -11,6 +11,8 @@ autobins = false
 autotests = true
 autoexamples = false
 autobenches = false
+# The gen-geonames [[bin]] made `cargo run` ambiguous; the app is the default.
+default-run = "BackupManager"
 
 [lib]
 name = "backup_manager_lib"
@@ -47,12 +49,23 @@ tooling = []
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.12.0", features = [] }
+# §11.3 c8: the native OS folder dialog for the Disco-local source. PLAN §19.1
+# said "all dialogs in-app"; the human overruled it on 2026-10-01 after trying the
+# in-app breadcrumb picker — the real Windows dialog is what people know, and
+# rebuilding it was worse. This is the ONE sanctioned native dialog.
+tauri-plugin-dialog = "2"
 thiserror = "2.0"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 kamadak-exif = "0.6.1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
+# PLAN §7.3 step 1 (recursive Media/<device> walk) and step 1's sha256 dedupe,
+# plus the §22 media id. All three were already in the tree transitively through
+# Tauri, so this is a promotion to direct deps, not a new dependency.
+walkdir = "2.5.0"
+sha2 = "0.10.9"
+uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.20"

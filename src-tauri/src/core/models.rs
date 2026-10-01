@@ -92,6 +92,98 @@ pub struct GeoDto {
     pub longitude: f64,
 }
 
+/// The `locations` half of §7.1's `LocationDto` — the §7.5 geocode answer as it
+/// is *persisted*, keyed by `media_id` (§6.1). `Option` fields mirror nullable
+/// columns; `city: None` is a real state (§7.5: GPS without a city index, or a
+/// point further than 40 km from any city), not a missing row.
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocationDto {
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub country: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+}
+
+/// §7.1 `MediaDto` — one gallery row, and the §12.3 lightbox. The two thumbnail
+/// fields are both exposed even though §6.7 stores only the 400px one: the 200px
+/// path is derived from `thumb400` by the §4.1 folder convention, so the DTO
+/// carries the derivation instead of making every reader repeat it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaDto {
+    pub id: String,
+    pub relative_path: String,
+    pub thumb_200: String,
+    pub thumb_400: String,
+    pub file_hash: String,
+    pub file_size: i64,
+    pub file_type: String,
+    /// §6.1 stores a naive local `DATETIME` (c6 decision 3), serialized without a
+    /// zone suffix so the UI cannot invent one.
+    pub captured_at: Option<String>,
+    pub has_metadata: bool,
+    pub device_name: Option<String>,
+    pub is_hidden: bool,
+    pub location: Option<LocationDto>,
+}
+
+/// §7.3 `scan(...) -> ScanSummary`, the value `scan_start` resolves with (§8.1).
+///
+/// The counts are the whole point: a scan that says "done" without saying how many
+/// files it found, indexed, skipped and organized is indistinguishable from a
+/// scan that silently did nothing. `no_metadata` is reported separately from
+/// `organized` because the `Sem_Metadados/` split (§7.3 step 5) is the rule the
+/// human is most likely to be checking after a drop.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanSummary {
+    /// The device whose folder was walked, as stored in `media.device_name`.
+    pub device: String,
+    /// Media files seen by the walker (after the extension filter).
+    pub found: u32,
+    /// Rows inserted into `media` by this scan.
+    pub inserted: u32,
+    /// Files whose sha256 is already indexed — §7.3 step 2's "dedupe by hash
+    /// wins". Includes files already organized, so a re-scan reports most of the
+    /// library here.
+    pub duplicates: u32,
+    /// Rows whose `relative_path` was repaired because the file had been moved
+    /// **inside** `Media/` by hand and the old path no longer existed. The same
+    /// bytes, one row, a pointer that is right again (§7.3.1 decision 3).
+    pub repaired: u32,
+    /// Files moved into `<YYYY>/<MM>/` or `Sem_Metadados/` by the mop-up rule.
+    pub organized: u32,
+    /// Of the inserted rows, those with `has_metadata = 0` (C7) — i.e. the ones
+    /// that landed in `Sem_Metadados/`.
+    pub no_metadata: u32,
+    /// Files with GPS that produced a `locations` row (§7.5 step 6).
+    pub located: u32,
+    /// Files with GPS and no city answer. **Not** an error: §7.5 keeps the
+    /// coordinates and shows no city.
+    pub located_none: u32,
+    /// Files skipped for a reason that is not a duplicate (unreadable, unhashable,
+    /// a path that cannot be represented). The scan continues past each one.
+    pub skipped: u32,
+    /// True when the walk was stopped by `scan_cancel` (§9.3).
+    pub cancelled: bool,
+}
+
+/// The `wolfs://progress/scan` payload (§9.2: `{ current, total, lastPath }`).
+/// `total` is 0 until the walk finishes collecting candidates — a folder walk
+/// cannot know its size in advance, so the UI shows an indeterminate bar first
+/// and switches to a real one once `total` arrives.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgressDto {
+    pub current: u32,
+    pub total: u32,
+    pub last_path: String,
+    /// Files inserted so far, so the row can show "N salvos" next to the bar.
+    pub inserted: u32,
+}
+
 /// §8.1 `root_info` + what Settings → Origem shows (§5.6).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

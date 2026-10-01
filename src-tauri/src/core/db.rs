@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::core::models::{DeviceCountDto, MediaScope, StatsDto, VaultStatusDto};
+use crate::core::models::{DeviceCountDto, LocationDto, MediaScope, StatsDto, VaultStatusDto};
 use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
@@ -272,6 +272,166 @@ pub fn vault_probe(pool: &SqlitePool) -> Result<VaultStatusDto, DbError> {
         unlocked: false,
         has_recovery_hint: false,
     })
+}
+
+/// A row the scanner wants to exist, expressed without a `rusqlite` type so
+/// `core::scanner` never sees one (§6.5). One per file, flattened with its
+/// optional §7.5 location so a batch is a single transaction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaInsert {
+    pub id: String,
+    /// Root-relative, `/`-joined (§6.1, §22).
+    pub relative_path: String,
+    /// The §6.7 400px path, computed at scan time from the §4.1 convention. It
+    /// is a *destination*, not a claim that the file exists: c9 writes it.
+    pub thumb_path: String,
+    pub file_hash: String,
+    pub file_size: i64,
+    pub file_type: String,
+    /// Naive local time, `%Y-%m-%d %H:%M:%S` — what §6.1's `DATETIME` column and
+    /// §22's `2024-05-14T09:32:11` mean for a wall clock.
+    pub captured_at: Option<String>,
+    /// C7, computed by `RawMetadata::has_metadata` and never re-derived here.
+    pub has_metadata: bool,
+    pub device_name: String,
+    /// The §7.5 answer, or `None` for "GPS but no city" *and* for "no GPS" — the
+    /// two are distinguished by `captured_at`/the media's own columns, and a row
+    /// with no location is correct in both cases.
+    pub location: Option<LocationDto>,
+}
+
+/// What §7.3 step 2's dedupe check found for one hash: the row that already owns
+/// these bytes, and the path it is recorded at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashMatch {
+    pub id: String,
+    pub relative_path: String,
+}
+
+/// §7.3 step 2 — is this content already indexed?
+///
+/// The lookup is by hash alone, because `media.file_hash` is `UNIQUE` (§6.1): a
+/// second row with the same bytes is not representable, so "already indexed" is
+/// the only answer that can be returned. The caller compares the path to decide
+/// between "already organized" and "a second copy exists" (see §7.3.1 decision 3).
+pub fn find_by_hash(conn: &Connection, hash: &str) -> Result<Option<HashMatch>, DbError> {
+    let mut stmt =
+        conn.prepare_cached("SELECT id, relative_path FROM media WHERE file_hash = ?1")?;
+    let mut rows = stmt.query([hash])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(HashMatch {
+            id: row.get(0)?,
+            relative_path: row.get(1)?,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// §7.3 step 7 — insert a batch in one transaction, flushing at
+/// [`SCAN_BATCH_ROWS`].
+///
+/// One transaction per batch, not per row: 200 single-row commits on an
+/// external SSD would spend the whole scan in fsync. Splitting at 200 bounds
+/// the WAL growth and keeps a cancel responsive — the unflushed tail is lost, and
+/// every flushed batch is already durable (§14 "never a partial file").
+pub const SCAN_BATCH_ROWS: usize = 200;
+
+/// Inserts `rows` and their locations, returning how many were written.
+///
+/// `INSERT` (not upsert) is deliberate: §7.3 step 2 has already decided what to
+/// do about existing content, so a conflict here means two files in one batch
+/// share a hash, and failing loudly beats silently overwriting a row whose
+/// `is_hidden` or `device_name` we did not look at.
+pub fn insert_media_batch(pool: &SqlitePool, rows: &[MediaInsert]) -> Result<usize, DbError> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+
+    {
+        let mut media = tx.prepare_cached(
+            "INSERT INTO media
+                (id, relative_path, thumb_path, file_hash, file_size, file_type,
+                 captured_at, has_metadata, is_hidden, device_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+        )?;
+        let mut location = tx.prepare_cached(
+            "INSERT INTO locations (media_id, city, state, country, latitude, longitude)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(media_id) DO UPDATE SET
+                city = excluded.city, state = excluded.state,
+                country = excluded.country, latitude = excluded.latitude,
+                longitude = excluded.longitude",
+        )?;
+
+        for row in rows {
+            media.execute(rusqlite::params![
+                row.id,
+                row.relative_path,
+                row.thumb_path,
+                row.file_hash,
+                row.file_size,
+                row.file_type,
+                row.captured_at,
+                row.has_metadata,
+                row.device_name,
+            ])?;
+            if let Some(place) = &row.location {
+                location.execute(rusqlite::params![
+                    row.id,
+                    place.city,
+                    place.state,
+                    place.country,
+                    place.latitude,
+                    place.longitude,
+                ])?;
+            }
+        }
+    }
+
+    tx.commit()?;
+    Ok(rows.len())
+}
+
+/// §7.3.1 decision 3: repoint a row whose file was moved inside `Media/` by hand.
+///
+/// Only the two path columns move. `file_hash` is the identity, and `id`,
+/// `captured_at`, `has_metadata`, `is_hidden` and `locations` all still describe
+/// the same bytes, so re-reading or rewriting them here would be a chance to lose
+/// a flag the scan has no business touching — `is_hidden` above all, since a
+/// repair must never un-hide a file.
+pub fn update_media_path(
+    pool: &SqlitePool,
+    id: &str,
+    relative_path: &str,
+    thumb_path: &str,
+) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let changed = conn.execute(
+        "UPDATE media SET relative_path = ?2, thumb_path = ?3 WHERE id = ?1",
+        rusqlite::params![id, relative_path, thumb_path],
+    )?;
+    if changed == 0 {
+        return Err(DbError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    Ok(())
+}
+
+/// §7.3 step 2's dedupe check for a whole walk: one cached statement per
+/// connection instead of a prepare per file.
+pub fn find_hashes(pool: &SqlitePool, hashes: &[&str]) -> Result<Vec<Option<HashMatch>>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    hashes
+        .iter()
+        .map(|hash| find_by_hash(&conn, hash))
+        .collect()
 }
 
 #[cfg(test)]

@@ -413,8 +413,15 @@ fn zone_start(stamp: &str) -> Option<usize> {
         .or(Some(stamp.len()))
 }
 
+/// The c6 fixtures (decision 11: "builders, not blobs"), shared.
+///
+/// `pub(crate)` because `core::scanner`'s tests build the *same* JPEG bytes the
+/// parity test reads: one EXIF block, three containers, and now a second module
+/// that must not grow its own near-duplicate. The items are `pub(crate)` rather
+/// than re-exported through a `fixtures` module only because the builders live
+/// here, next to the parser they pin.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::path::PathBuf;
 
@@ -424,16 +431,16 @@ mod tests {
 
     /// The date every date fixture carries, as EXIF writes it and as the DB
     /// keeps it.
-    const DATE: &str = "2024:03:15 22:33:44";
-    const DATE_ISO: &str = "2024-03-15T22:33:44";
+    pub(crate) const DATE: &str = "2024:03:15 22:33:44";
+    pub(crate) const DATE_ISO: &str = "2024-03-15T22:33:44";
 
     /// A real GPS IFD: Dearborn, Michigan, 42° 19' 53.2" N, 83° 02' 58.2" W —
     /// the same numbers as the decimals, written as the rationals a camera
     /// writes (seconds in tenths).
     const LAT_DMS: [(u32, u32); 3] = [(42, 1), (19, 1), (532, 10)];
     const LON_DMS: [(u32, u32); 3] = [(83, 1), (2, 1), (582, 10)];
-    const LAT_DEG: f64 = 42.0 + 19.0 / 60.0 + 53.2 / 3600.0;
-    const LON_DEG: f64 = 83.0 + 2.0 / 60.0 + 58.2 / 3600.0;
+    pub(crate) const LAT_DEG: f64 = 42.0 + 19.0 / 60.0 + 53.2 / 3600.0;
+    pub(crate) const LON_DEG: f64 = 83.0 + 2.0 / 60.0 + 58.2 / 3600.0;
 
     /// The same coordinates as `SRATIONAL`, the shape some cameras write instead.
     const SIGNED_LAT_DMS: [(i32, i32); 3] = [(42, 1), (19, 1), (532, 10)];
@@ -444,7 +451,7 @@ mod tests {
     /// Which tags a fixture writes. Each variant exists to pin one rule, so a
     /// failure names the rule instead of "EXIF broke".
     #[derive(Clone, Copy, PartialEq)]
-    enum Fixture {
+    pub(crate) enum Fixture {
         /// `DateTimeOriginal` alone — the §7.4 first step.
         Date,
         /// Both date tags, to pin the precedence between them.
@@ -490,7 +497,7 @@ mod tests {
     /// Layout: header, one data area for every value longer than the 4-byte
     /// entry slot (word-aligned, [EXIF23 4.6.1]), then IFD0, the Exif IFD and
     /// the GPS IFD.
-    fn tiff(fixture: Fixture) -> Vec<u8> {
+    pub(crate) fn tiff(fixture: Fixture) -> Vec<u8> {
         let (original, digitized) = match fixture {
             Fixture::BothDates => (ascii(DATE), Some(ascii("2023:01:02 03:04:05"))),
             Fixture::ImpossibleDate => (ascii("2024:13:45 99:99:99"), None),
@@ -673,7 +680,7 @@ mod tests {
     /// SOI + one APP1 `Exif\0\0` segment + EOI. No image data: §7.4 reads the
     /// header only, and a fixture that could be opened by a viewer would need a
     /// real picture.
-    fn jpeg(exif: &[u8]) -> Vec<u8> {
+    pub(crate) fn jpeg(exif: &[u8]) -> Vec<u8> {
         let mut out = vec![0xff, 0xd8, 0xff, 0xe1];
         out.extend_from_slice(&((exif.len() + 8) as u16).to_be_bytes());
         out.extend_from_slice(b"Exif\0\0");
@@ -684,7 +691,7 @@ mod tests {
 
     /// A PNG with an `eXIf` chunk [PNGEXT150 3.7]: signature, IHDR, the EXIF
     /// payload, IEND.
-    fn png(exif: Option<&[u8]>) -> Vec<u8> {
+    pub(crate) fn png(exif: Option<&[u8]>) -> Vec<u8> {
         let mut out = b"\x89PNG\x0d\x0a\x1a\x0a".to_vec();
         // 1×1, 8-bit grayscale: the smallest header that is a valid PNG.
         chunk(&mut out, b"IHDR", &[0, 0, 0, 1, 8, 0, 0, 0, 1]);
@@ -725,7 +732,7 @@ mod tests {
     /// A structurally valid HEIC carrying the EXIF block as its `Exif` item:
     /// `ftyp` + `meta`(`iinf`/`infe` declaring the item, `iloc` locating it in
     /// `idat` with `construction_method = 1`, and the `idat` payload itself).
-    fn heic(exif: &[u8]) -> Vec<u8> {
+    pub(crate) fn heic(exif: &[u8]) -> Vec<u8> {
         /// An arbitrary item id, as a camera would write.
         const ITEM_ID: u16 = 0x1e1d;
 
@@ -783,7 +790,7 @@ mod tests {
 
     // ---- the tests --------------------------------------------------------
 
-    fn write(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+    pub(crate) fn write(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, bytes).unwrap();
         path
