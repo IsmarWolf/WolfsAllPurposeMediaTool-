@@ -113,6 +113,22 @@ CREATE TABLE IF NOT EXISTS process_log (
 CREATE INDEX IF NOT EXISTS idx_process_log_created ON process_log(created_at);
 "#;
 
+/// §7.6's side table: why a media row has no tile. Additive like §14's
+/// `process_log` — not one of the five domain tables of §6.1, and no media
+/// query depends on it.
+///
+/// Only **failures** live here. A row whose two WebP files exist needs no
+/// marker (the files are the source of truth, §7.6), so `thumb_meta` answers
+/// "why is there no tile" and is cleared the moment a render succeeds.
+const THUMB_META_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS thumb_meta (
+    media_id    TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+    thumb_state TEXT NOT NULL,                    -- 'Error' (see §7.6 decisions)
+    error       TEXT,
+    updated_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+"#;
+
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error("sqlite: {0}")]
@@ -156,6 +172,7 @@ pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     tx.execute_batch(VERBATIM_SCHEMA)?;
     tx.execute_batch(INDEXES)?;
     tx.execute_batch(PROCESS_LOG_SCHEMA)?;
+    tx.execute_batch(THUMB_META_SCHEMA)?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
@@ -422,6 +439,66 @@ pub fn update_media_path(
     Ok(())
 }
 
+/// §7.6 — one row a thumbnail producer enqueues, without a `rusqlite` type
+/// (§6.5): `thumb_path` is the 400px destination of §6.7, and the 200px path is
+/// the §4.1 `400` → `200` swap derived in `thumbs.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThumbJobRow {
+    pub id: String,
+    pub relative_path: String,
+    pub thumb_path: String,
+}
+
+/// §7.6's two producers read the whole library here: the post-scan mop-up
+/// (every row, so rows from before c9 and from an interrupted run are covered)
+/// and `thumbs_rebuild_all`. Whether a row still *needs* its thumbs is the
+/// worker's existence check, not a SQL question — the files are the truth.
+pub fn thumb_jobs(pool: &SqlitePool) -> Result<Vec<ThumbJobRow>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, relative_path, thumb_path FROM media ORDER BY relative_path, id",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ThumbJobRow {
+                id: row.get(0)?,
+                relative_path: row.get(1)?,
+                thumb_path: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// §7.6: record why a media has no tile. `thumb_meta` is a failure log, so the
+/// `updated_at` column is stamped again on every retry.
+pub fn thumb_mark_failed(pool: &SqlitePool, media_id: &str, error: &str) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    conn.execute(
+        "INSERT INTO thumb_meta (media_id, thumb_state, error, updated_at)
+         VALUES (?1, 'Error', ?2, datetime('now'))
+         ON CONFLICT(media_id) DO UPDATE SET
+            thumb_state = 'Error', error = excluded.error,
+            updated_at = datetime('now')",
+        rusqlite::params![media_id, error],
+    )?;
+    Ok(())
+}
+
+/// A render that finally succeeded owes nothing to the log: the files explain
+/// themselves, so the failure row goes away (a no-op when there is none).
+pub fn thumb_clear_failed(pool: &SqlitePool, media_id: &str) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    conn.execute("DELETE FROM thumb_meta WHERE media_id = ?1", [media_id])?;
+    Ok(())
+}
+
 /// §7.3 step 2's dedupe check for a whole walk: one cached statement per
 /// connection instead of a prepare per file.
 pub fn find_hashes(pool: &SqlitePool, hashes: &[&str]) -> Result<Vec<Option<HashMatch>>, DbError> {
@@ -465,8 +542,24 @@ mod tests {
             conn,
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
         );
-        all.retain(|name| name != "process_log");
+        // The additive side tables: §14's log and §7.6's `thumb_meta` are not
+        // domain tables, so the §6.1 assertion below stays about the five.
+        all.retain(|name| name != "process_log" && name != "thumb_meta");
         all
+    }
+
+    #[test]
+    fn open_creates_the_thumb_meta_side_table_alongside_the_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        let conn = pool.get().unwrap();
+
+        let side = names(
+            &conn,
+            "SELECT name FROM sqlite_master WHERE type = 'table'
+             AND name IN ('process_log', 'thumb_meta') ORDER BY name",
+        );
+        assert_eq!(side, ["process_log", "thumb_meta"]);
     }
 
     #[test]

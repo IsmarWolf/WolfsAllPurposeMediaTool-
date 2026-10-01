@@ -184,6 +184,30 @@ pub struct ScanProgressDto {
     pub inserted: u32,
 }
 
+/// The `wolfs://thumb/progress` payload (§9.2's `{ mediaId, ok }`): one event
+/// per media as its pair of WebP slots lands — or fails — so the gallery lights
+/// up tile by tile instead of refetching the whole grid.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbProgressDto {
+    pub media_id: String,
+    /// Both slots exist (or the row was already rendered). `false` means a
+    /// `thumb_meta` row now explains the missing tile.
+    pub ok: bool,
+}
+
+/// The `wolfs://thumb/done` payload: fired once when a queue drains (§7.6).
+/// §9.2 spells the wildcard channel as `{ mediaId, ok }` — that is the per-item
+/// shape of `progress`; `done` is the batch verdict the rebuild UI shows.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbSummaryDto {
+    /// Rows handed to the renderer, skipped ones included.
+    pub processed: u32,
+    /// Rows that ended with a `thumb_meta` failure.
+    pub failed: u32,
+}
+
 /// §8.1 `root_info` + what Settings → Origem shows (§5.6).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

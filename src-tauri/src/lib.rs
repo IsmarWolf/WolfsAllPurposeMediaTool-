@@ -34,6 +34,7 @@ pub fn run() {
             commands::media::scan_start,
             commands::media::scan_cancel,
             commands::media::geo_lookup,
+            commands::media::thumbs_rebuild_all,
             commands::settings::resolve_app_root,
             commands::settings::settings_recalc_root,
             commands::settings::settings_reveal_root,

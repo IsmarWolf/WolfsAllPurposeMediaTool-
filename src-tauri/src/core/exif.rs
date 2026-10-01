@@ -138,6 +138,41 @@ fn extension(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 
+/// §7.6 (c9): the EXIF orientation of an image, `1` when there is none.
+///
+/// The thumbnailer applies this before resizing: a tile rendered straight from
+/// the sensor bytes shows every phone portrait sideways, and the UI cannot fix
+/// it (PLAN never mentions orientation — this helper *is* the c9 decision,
+/// recorded in §7.6). Anything unreadable degrades to `1`, the same rule §7.4
+/// applies to a broken date: the file keeps its tile, unrotated.
+pub fn orientation(path: &Path) -> u16 {
+    let Ok(file) = File::open(path) else {
+        return 1;
+    };
+    let mut reader = BufReader::new(file);
+    let exif = match Reader::new()
+        .continue_on_error(true)
+        .read_from_container(&mut reader)
+    {
+        Ok(exif) => exif,
+        Err(err) => match err.distill_partial_result(|_| ()) {
+            Ok(exif) => exif,
+            Err(_) => return 1,
+        },
+    };
+    let Some(field) = exif.get_field(Tag::Orientation, In::PRIMARY) else {
+        return 1;
+    };
+    let value = match &field.value {
+        Value::Short(values) => values.first().copied(),
+        Value::Long(values) => values.first().map(|&value| value as u16),
+        _ => None,
+    };
+    // Only 1..=8 are real orientations; every other value (a corrupted tag,
+    // a vendor extension) degrades to 1 — unreadable is "upright", not wrong.
+    value.filter(|v| (1..=8).contains(v)).unwrap_or(1)
+}
+
 fn image_metadata(path: &Path) -> Result<RawMetadata, ExifError> {
     let file = File::open(path).map_err(|source| ExifError::Read {
         path: path.display().to_string(),

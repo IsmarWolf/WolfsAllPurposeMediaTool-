@@ -59,6 +59,19 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 kamadak-exif = "0.6.1"
+# PLAN §7.6 (c9): decode/resize for the Rust thumbnail path. HEIC/AVIF and every
+# video go to ffmpeg instead, so the codecs are exactly the formats §7.4.1 lists
+# for the image crate — no avif/heif features, no C build here.
+image = { version = "0.25", default-features = false, features = [
+  "jpeg",
+  "png",
+  "tiff",
+  "webp",
+] }
+# §7.6 encodes WebP at q=80, and `image`'s own encoder is lossless-only (its
+# docs point at libwebp for lossy). libwebp-sys compiles its C with `cc`, the
+# same mechanism rusqlite's bundled SQLite already uses on this box.
+webp = "0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
 # PLAN §7.3 step 1 (recursive Media/<device> walk) and step 1's sha256 dedupe,
 # plus the §22 media id. All three were already in the tree transitively through

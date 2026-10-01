@@ -15,11 +15,13 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
-use crate::core::db;
+use crate::core::db::{self, SqlitePool};
 use crate::core::models::{GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto};
+use crate::core::paths::PathResolver;
 use crate::core::scanner;
+use crate::core::thumbs;
 use crate::error::AppError;
-use crate::state::{AppState, JobKind, channels};
+use crate::state::{AppState, JobKind, JobRegistry, channels};
 
 /// §8.1 `stats_get` — Dashboard stat cards (C-1a..1d) and the Zone 4 summary.
 ///
@@ -75,7 +77,9 @@ pub async fn scan_start(
         // §7.3 vs §11.3. The folder is borrowed for the scan and dropped with the
         // closure; only the copy's own bytes ever reach the tree.
         let source = match folder.as_deref() {
-            Some(path) => scanner::ScanSource::CopyFrom { source: Path::new(path) },
+            Some(path) => scanner::ScanSource::CopyFrom {
+                source: Path::new(path),
+            },
             None => scanner::ScanSource::Device,
         };
         let result = scanner::scan(
@@ -99,10 +103,100 @@ pub async fn scan_start(
         let summary = result?;
         // The counts moved, so every open panel is now stale (§10.5).
         let _ = app.emit(channels::DB_CHANGED, ());
+        // §7.6's producer (c9 decision 1): the mop-up runs *after* the walk, on
+        // its own thread, so the awaited ScanSummary resolves now and a full
+        // 512-slot queue can never hold the scan hostage.
+        mop_up_thumbs(
+            app.clone(),
+            jobs.clone(),
+            snapshot.resolver.clone(),
+            pool.clone(),
+            ffmpeg.clone(),
+        );
         Ok(summary)
     })
     .await
     .map_err(|error| AppError::Unavailable(format!("a thread de scan morreu: {error}")))?
+}
+
+/// §7.6's post-scan producer: every row, `force = false`, on a fresh thread.
+///
+/// The `JobKind::Thumbs` claim happens *inside* the thread: a rebuild already
+/// generating owns the slot, and its force-queue covers every row anyway, so
+/// yielding here loses nothing (§9.3, one Thumbs job — c9 decision 1).
+fn mop_up_thumbs(
+    app: AppHandle,
+    jobs: Arc<JobRegistry>,
+    resolver: PathResolver,
+    pool: SqlitePool,
+    ffmpeg: Option<PathBuf>,
+) {
+    std::thread::spawn(move || {
+        let Ok(slot) = jobs.claim(JobKind::Thumbs) else {
+            return;
+        };
+        let id = slot.id().to_string();
+        let rows = match thumbs::all_jobs(&pool) {
+            Ok(rows) => rows,
+            Err(error) => {
+                eprintln!("[wolfsmedia] thumb job list failed: {error}");
+                jobs.release(JobKind::Thumbs, &id);
+                return;
+            }
+        };
+        let queue = thumbs::Queue::start(resolver, pool, ffmpeg, false, {
+            let app = app.clone();
+            move |event| {
+                let _ = app.emit(channels::THUMB_PROGRESS, event);
+            }
+        });
+        for row in rows {
+            queue.enqueue(row);
+        }
+        let summary = queue.shutdown().join();
+        let _ = app.emit(channels::THUMB_DONE, summary);
+        jobs.release(JobKind::Thumbs, &id);
+    });
+}
+
+/// §8.1 `thumbs_rebuild_all` — §7.6's `[[Rebuild all thumbs]]`: re-render every
+/// row with `force = true`, as a background job. The claim happens on the
+/// calling thread so a second click while one runs is `E_CONFLICT` (§9.3),
+/// synchronously, on the promise; progress itself is the `wolfs://thumb/*`
+/// event pair, and `()` resolving only means "the job started".
+#[tauri::command]
+pub fn thumbs_rebuild_all(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    let jobs = state.jobs();
+    let slot = jobs.claim(JobKind::Thumbs)?;
+    let id = slot.id().to_string();
+    let resolver = snapshot.resolver.clone();
+    let ffmpeg = ffmpeg_path(&snapshot);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let rows = match thumbs::all_jobs(&pool) {
+            Ok(rows) => rows,
+            Err(error) => {
+                eprintln!("[wolfsmedia] thumb job list failed: {error}");
+                jobs.release(JobKind::Thumbs, &id);
+                return;
+            }
+        };
+        let queue = thumbs::Queue::start(resolver, pool, ffmpeg, true, {
+            let app = app.clone();
+            move |event| {
+                let _ = app.emit(channels::THUMB_PROGRESS, event);
+            }
+        });
+        for row in rows {
+            queue.enqueue(row);
+        }
+        let summary = queue.shutdown().join();
+        let _ = app.emit(channels::THUMB_DONE, summary);
+        jobs.release(JobKind::Thumbs, &id);
+    });
+    Ok(())
 }
 
 /// §8.1 `scan_cancel` — §9.3. Idempotent: cancelling with nothing running is a

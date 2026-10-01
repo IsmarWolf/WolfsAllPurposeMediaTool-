@@ -105,6 +105,9 @@ struct Candidate {
 
 /// The §7.3 pipeline. `emit` receives the walk's progress; the return is the
 /// summary the toast shows.
+// Eight args is the pipeline's whole context (c8): bundling them into a struct
+// would just move the list, not shorten it.
+#[allow(clippy::too_many_arguments)]
 pub fn scan(
     device: &str,
     resolver: &PathResolver,
@@ -212,8 +215,7 @@ pub fn scan(
                         // here: the file was dragged inside our own tree. Repair
                         // the pointer instead of indexing the same bytes twice.
                         let target_rel = target_rel(&label, &metadata, &name);
-                        let (abs, moved) =
-                            organize(resolver, &candidate.abs, &target_rel, false)?;
+                        let (abs, moved) = organize(resolver, &candidate.abs, &target_rel, false)?;
                         let final_rel = resolver.abs_to_rel(&abs)?;
                         db::update_media_path(
                             pool,
@@ -1199,7 +1201,17 @@ mod tests {
         let cancel = CancelFlag::new();
         let geocoder = Geocoder::new(resolver.geonames_path());
 
-        let summary = scan(raw, &resolver, &pool, &geocoder, None, ScanSource::Device, &cancel, |_| {}).unwrap();
+        let summary = scan(
+            raw,
+            &resolver,
+            &pool,
+            &geocoder,
+            None,
+            ScanSource::Device,
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
 
         assert_eq!(summary.device, paths::sanitize_label(raw));
         let conn = pool.get().unwrap();
@@ -1304,11 +1316,7 @@ mod tests {
         source
     }
 
-    fn run_copy(
-        resolver: &PathResolver,
-        pool: &SqlitePool,
-        source: &Path,
-    ) -> ScanSummary {
+    fn run_copy(resolver: &PathResolver, pool: &SqlitePool, source: &Path) -> ScanSummary {
         let cancel = CancelFlag::new();
         let geocoder = Geocoder::new(resolver.geonames_path());
         scan(
@@ -1339,8 +1347,14 @@ mod tests {
         assert_eq!(summary.inserted, 3, "{summary:?}");
         assert_eq!(summary.organized, 3, "every file landed in a new place");
         assert_eq!(summary.repaired, 0, "a human source is never repaired");
-        assert_eq!(summary.no_metadata, 1, "the mtime-only scan is Sem_Metadados");
-        assert_eq!(summary.located_none, 1, "GPS without an index still keeps the point");
+        assert_eq!(
+            summary.no_metadata, 1,
+            "the mtime-only scan is Sem_Metadados"
+        );
+        assert_eq!(
+            summary.located_none, 1,
+            "GPS without an index still keeps the point"
+        );
 
         let paths: Vec<String> = rows(&pool).into_iter().map(|row| row.0).collect();
         let stem = format!("Media/Fotos antigas/{}/", year_month());
@@ -1352,7 +1366,9 @@ mod tests {
             "{paths:?}"
         );
         assert!(
-            paths.iter().any(|p| p.contains("gps") && resolver.rel_to_abs(p).is_ok()),
+            paths
+                .iter()
+                .any(|p| p.contains("gps") && resolver.rel_to_abs(p).is_ok()),
             "{paths:?}"
         );
 
@@ -1375,7 +1391,12 @@ mod tests {
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_type().is_file())
             .map(|entry| {
-                let name = entry.path().strip_prefix(root).unwrap().to_string_lossy().to_string();
+                let name = entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
                 let bytes = fs::read(entry.path()).unwrap();
                 (name, bytes)
             })
@@ -1409,7 +1430,10 @@ mod tests {
         let second = run_copy(&resolver, &pool, &source);
 
         assert_eq!(first.inserted, 3, "{first:?}");
-        assert_eq!(second.inserted, 0, "the same folder twice is a dup, not a repair");
+        assert_eq!(
+            second.inserted, 0,
+            "the same folder twice is a dup, not a repair"
+        );
         assert_eq!(second.duplicates, 3, "{second:?}");
         assert_eq!(second.repaired, 0);
         assert_eq!(second.organized, 0);
@@ -1432,7 +1456,10 @@ mod tests {
 
         assert_eq!(summary.inserted, 2, "{summary:?}");
         let paths: Vec<String> = rows(&pool).into_iter().map(|row| row.0).collect();
-        assert!(paths.iter().any(|p| p.ends_with("IMG_0001.jpg")), "{paths:?}");
+        assert!(
+            paths.iter().any(|p| p.ends_with("IMG_0001.jpg")),
+            "{paths:?}"
+        );
         assert!(
             paths.iter().any(|p| p.ends_with("IMG_0001_1.jpg")),
             "{paths:?}"
