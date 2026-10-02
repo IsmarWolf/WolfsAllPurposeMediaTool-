@@ -531,6 +531,13 @@
   gap: var(--space-md);
 }
 
+/* The `loading` skeleton is the only multi-column branch; `ideal` hosts the
+   screen's own layout (the Mídia gallery grid, the Dashboard's cards), so it
+   must span the full width instead of being squeezed into a 160px column. */
+.state-region[data-state='ideal'] {
+  grid-template-columns: 1fr;
+}
+
 .state-region[data-state='empty'],
 .state-region[data-state='noresults'],
 .state-region[data-state='error'] {
@@ -677,7 +684,9 @@
 .dash-demo__grid,
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--tile-size), 1fr));
+  /* A 160px floor keeps 2+ columns even in the narrowest Zone 3 (§10.6.3);
+     `auto-fill` grows them on a wide window. */
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: var(--space-md);
 }
 
@@ -969,4 +978,307 @@
   .zone3 {
     padding-bottom: calc(var(--space-card) * 2);
   }
+}
+
+/* ------------------------------------------------------- media gallery (c10) */
+
+.md-input,
+.md-select {
+  height: var(--hit-target);
+  padding: 0 var(--space-md);
+  font: inherit;
+  font-size: var(--text-label-m);
+  color: var(--md-fg);
+  background-color: var(--md-surface-ctr-low);
+  border: 0;
+  border-radius: var(--radius-field-top);
+  border-bottom: var(--border-field) solid var(--md-outline);
+}
+
+.md-input:focus,
+.md-select:focus {
+  outline: none;
+  border-bottom-color: var(--md-primary);
+}
+
+.md-input::placeholder {
+  color: var(--md-on-surface-variant);
+  opacity: 0.5;
+}
+
+.media-grid__virtual {
+  height: 600px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.media-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--md-surface-ctr);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow var(--dur-micro) var(--ease-emphasized);
+}
+
+.media-tile:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.media-tile--selected {
+  outline: 2px solid var(--md-primary);
+  outline-offset: -2px;
+}
+
+.media-tile__image {
+  position: relative;
+  /* One square for every tile, whatever the photo's aspect: the WebP is
+     cropped to fill (`object-fit: cover` below), so a tile never resizes. */
+  flex: none;
+  aspect-ratio: 1 / 1;
+  background-color: var(--md-surface-ctr-high);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.media-tile__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-tile__badge {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  padding: 0 var(--space-xs);
+  font-size: var(--text-label-s);
+  color: var(--md-on-primary);
+  background-color: var(--md-primary);
+  border-radius: var(--radius-pill);
+}
+
+.media-tile__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-xs);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-emphasized);
+}
+
+.media-tile:hover .media-tile__overlay,
+.media-tile:focus-within .media-tile__overlay {
+  opacity: 1;
+}
+
+.media-tile__check,
+.media-tile__fav {
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-title-l);
+  color: var(--md-on-primary);
+  background-color: rgba(0, 0, 0, 0.5);
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.media-tile__info {
+  padding: var(--space-xs) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Fixed strip height: the image above is a square, so this is what keeps
+     every tile in a row exactly the same size. */
+  min-height: 48px;
+}
+
+.media-tile__name {
+  font-size: var(--text-label-s);
+  color: var(--md-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-tile__meta {
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+}
+
+.media-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.media-chips__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.media-chips__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: var(--text-body-m);
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.media-chips__remove:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* ------------------------------------------------------- lightbox (§11.4) */
+
+.md-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.md-lightbox__backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: var(--md-scrim);
+}
+
+.md-lightbox__content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-card);
+  width: min(900px, 92vw);
+  max-height: 88vh;
+  padding: var(--space-card);
+  background-color: var(--md-surface-ctr);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.md-lightbox__main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.md-lightbox__image {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+}
+
+.md-lightbox__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  overflow-y: auto;
+}
+
+.md-lightbox__title {
+  margin: 0;
+  font-size: var(--text-title-l);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.md-lightbox__actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------- drawer (§10.6.1) */
+
+.md-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drawer);
+}
+
+.md-drawer__backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: var(--md-scrim);
+}
+
+.md-drawer__panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-card);
+  background-color: var(--md-surface-ctr);
+  box-shadow: var(--shadow-modal);
+  overflow-y: auto;
+}
+
+.md-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.md-drawer__header h2 {
+  margin: 0;
+  font-size: var(--text-title-l);
+  font-weight: 500;
+}
+
+.md-drawer__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.md-drawer__section h3 {
+  margin: 0;
+  font-size: var(--text-body-m);
+  font-weight: 500;
+}
+
+.md-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--text-label-m);
+  cursor: pointer;
+}
+
+.md-checkbox input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--md-primary);
 }

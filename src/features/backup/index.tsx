@@ -114,16 +114,18 @@ export function BackupScreen() {
                     {t('backup.importStart')}
                   </Button>
                 )}
-<Button variant="text" onClick={pickFolder}>
-                {t('backup.importChange')}
-              </Button>
+                <Button variant="text" onClick={pickFolder}>
+                  {t('backup.importChange')}
+                </Button>
               </div>
 
               {scan.progress && scan.progress.total > 0 ? (
                 <div className="md-meter" aria-label={t('dash.scanProgressLabel')}>
                   <div
                     className="md-meter__fill md-meter__fill--images"
-                    style={{ width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%` }}
+                    style={{
+                      width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%`,
+                    }}
                   />
                 </div>
               ) : null}

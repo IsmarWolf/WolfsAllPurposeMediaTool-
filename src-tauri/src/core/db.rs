@@ -12,7 +12,10 @@ use rusqlite::Connection;
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::core::models::{DeviceCountDto, LocationDto, MediaScope, StatsDto, VaultStatusDto};
+use crate::core::models::{
+    DeviceCountDto, FilterSpec, LocationDto, MediaDto, MediaQueryDto, MediaScope, StatsDto,
+    VaultStatusDto,
+};
 use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
@@ -262,6 +265,209 @@ pub fn stats(pool: &SqlitePool, scope: MediaScope) -> Result<StatsDto, DbError> 
         device_count: top_devices.len() as i64,
         top_devices,
     })
+}
+
+/// §8.1 `media_query` — one page of gallery results, filtered + sorted.
+///
+/// The scope is always bound as a parameter (§6.6). Every filter is optional;
+/// an absent filter adds no WHERE clause. The search is a case-insensitive
+/// subsequence match on the filename (the last path component).
+pub fn media_query(pool: &SqlitePool, spec: &FilterSpec) -> Result<MediaQueryDto, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+
+    let mut clauses: Vec<String> = vec!["m.is_hidden = ?1".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(spec.scope.hidden_value())];
+
+    if let Some(device) = &spec.device {
+        clauses.push(format!("m.device_name = ?{}", params.len() + 1));
+        params.push(Box::new(device.clone()));
+    }
+
+    if !spec.cities.is_empty() {
+        let placeholders: Vec<String> = (0..spec.cities.len())
+            .map(|i| format!("?{}", params.len() + i + 1))
+            .collect();
+        clauses.push(format!("LOWER(l.city) IN ({})", placeholders.join(", ")));
+        for city in &spec.cities {
+            params.push(Box::new(city.to_lowercase()));
+        }
+    }
+
+    if let Some(month) = &spec.month {
+        clauses.push(format!(
+            "strftime('%Y-%m', m.captured_at) = ?{}",
+            params.len() + 1
+        ));
+        params.push(Box::new(month.clone()));
+    }
+
+    if spec.no_metadata {
+        clauses.push("m.has_metadata = 0".to_string());
+    }
+
+    if let Some(search) = &spec.search {
+        // Fuzzy subsequence on the *filename* (§10.6.1), not the whole path:
+        // a whole-path match lets "IMG" hit `Sem_Metadados/bare.jpg` through
+        // `...m...g(.jpg)`. The filename is the tail after the last `/`
+        // (`RTRIM` strips the trailing non-slash run, `REPLACE` drops the head).
+        // User input is escaped first, then the wildcards are added.
+        let escaped: Vec<String> = search
+            .chars()
+            .map(|c| match c {
+                '\\' => "\\\\".to_string(),
+                '%' => "\\%".to_string(),
+                '_' => "\\_".to_string(),
+                _ => c.to_string(),
+            })
+            .collect();
+        clauses.push(format!(
+            "LOWER(REPLACE(m.relative_path, RTRIM(m.relative_path, REPLACE(m.relative_path, '/', '')), '')) LIKE ?{} ESCAPE '\\'",
+            params.len() + 1
+        ));
+        params.push(Box::new(format!("%{}%", escaped.join("%").to_lowercase())));
+    }
+
+    if let Some(file_type) = &spec.file_type {
+        clauses.push(format!("m.file_type = ?{}", params.len() + 1));
+        params.push(Box::new(file_type.clone()));
+    }
+
+    let where_sql = clauses.join(" AND ");
+
+    let order_sql = match spec.sort.as_str() {
+        "capturedAsc" => "m.captured_at ASC",
+        "name" => "m.relative_path ASC",
+        "size" => "m.file_size DESC",
+        _ => "m.captured_at DESC",
+    };
+
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM media m LEFT JOIN locations l ON l.media_id = m.id WHERE {where_sql}"),
+        rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+        |row| row.get(0),
+    )?;
+
+    let limit = spec.limit.clamp(1, 1000);
+    let offset = spec.offset.max(0);
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
+                m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
+                l.city, l.state, l.country, l.latitude, l.longitude
+         FROM media m
+         LEFT JOIN locations l ON l.media_id = m.id
+         WHERE {where_sql}
+         ORDER BY {order_sql}
+         LIMIT ?{} OFFSET ?{}",
+        params.len() + 1,
+        params.len() + 2,
+    ))?;
+
+    let mut all_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    all_params.push(&limit);
+    all_params.push(&offset);
+
+    let items = stmt
+        .query_map(rusqlite::params_from_iter(all_params), |row| {
+            let relative_path: String = row.get(1)?;
+            let thumb_400: String = row.get(2)?;
+            let thumb_200 = thumb_400.replacen("/400/", "/200/", 1);
+            Ok(MediaDto {
+                id: row.get(0)?,
+                relative_path,
+                thumb_200,
+                thumb_400,
+                file_hash: row.get(3)?,
+                file_size: row.get(4)?,
+                file_type: row.get(5)?,
+                captured_at: row.get(6)?,
+                has_metadata: row.get(7)?,
+                device_name: row.get(8)?,
+                is_hidden: row.get(9)?,
+                location: Some(LocationDto {
+                    city: row.get(10)?,
+                    state: row.get(11)?,
+                    country: row.get(12)?,
+                    latitude: row.get(13)?,
+                    longitude: row.get(14)?,
+                }),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let has_more = (offset + items.len() as i64) < total;
+
+    Ok(MediaQueryDto {
+        items,
+        total,
+        has_more,
+    })
+}
+
+/// §8.1 `media_detail` — one media item with its location, for the lightbox.
+pub fn media_detail(pool: &SqlitePool, id: &str) -> Result<Option<MediaDto>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
+                m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
+                l.city, l.state, l.country, l.latitude, l.longitude
+         FROM media m
+         LEFT JOIN locations l ON l.media_id = m.id
+         WHERE m.id = ?1",
+    )?;
+
+    let mut rows = stmt.query([id])?;
+    match rows.next()? {
+        Some(row) => {
+            let relative_path: String = row.get(1)?;
+            let thumb_400: String = row.get(2)?;
+            let thumb_200 = thumb_400.replacen("/400/", "/200/", 1);
+            Ok(Some(MediaDto {
+                id: row.get(0)?,
+                relative_path,
+                thumb_200,
+                thumb_400,
+                file_hash: row.get(3)?,
+                file_size: row.get(4)?,
+                file_type: row.get(5)?,
+                captured_at: row.get(6)?,
+                has_metadata: row.get(7)?,
+                device_name: row.get(8)?,
+                is_hidden: row.get(9)?,
+                location: Some(LocationDto {
+                    city: row.get(10)?,
+                    state: row.get(11)?,
+                    country: row.get(12)?,
+                    latitude: row.get(13)?,
+                    longitude: row.get(14)?,
+                }),
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+/// §8.1 `media_remove` — delete media rows by id (cascade removes locations).
+/// Returns how many were actually deleted.
+pub fn media_remove(pool: &SqlitePool, ids: &[String]) -> Result<usize, DbError> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let mut deleted = 0;
+    for id in ids {
+        deleted += tx.execute("DELETE FROM media WHERE id = ?1", [id])?;
+    }
+    tx.commit()?;
+    Ok(deleted)
 }
 
 /// §7.2 `vacuum(pool)`: `VACUUM` rewrites the whole file, so it must never run
@@ -826,6 +1032,242 @@ mod tests {
         let status = vault_probe(&pool).unwrap();
         assert!(status.configured);
         assert!(!status.unlocked, "c4 has no session; c18 owns unlock");
+    }
+
+    fn gallery_spec() -> FilterSpec {
+        FilterSpec {
+            scope: MediaScope::Standard,
+            sort: "capturedDesc".into(),
+            limit: 240,
+            offset: 0,
+            ..FilterSpec::default()
+        }
+    }
+
+    fn seed_gallery(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO media (id, relative_path, thumb_path, file_hash, file_size, file_type, captured_at, has_metadata, is_hidden, device_name) VALUES
+               ('g1', 'Media/PC/2024/03/IMG_1.jpg',  'Thumbnails/400/PC/2024/03/IMG_1.webp',  'h1', 1000, 'image', '2024-03-15 10:00:00', 1, 0, 'PC'),
+               ('g2', 'Media/PC/2024/04/VID_2.mov',  'Thumbnails/400/PC/2024/04/VID_2.webp',  'h2', 2000, 'video', '2024-04-01 10:00:00', 1, 0, 'PC'),
+               ('g3', 'Media/PC/Sem_Metadados/bare.jpg', 'Thumbnails/400/PC/Sem_Metadados/bare.webp', 'h3', 500, 'image', NULL, 0, 0, 'PC'),
+               ('g4', 'Media/PC/2024/03/hidden.jpg', 'Thumbnails/400/PC/2024/03/hidden.webp', 'h4', 700, 'image', '2024-03-20 10:00:00', 1, 1, 'PC');
+             INSERT INTO locations (media_id, city, state, country, latitude, longitude) VALUES
+               ('g1', 'Sao Paulo', 'SP', 'BR', -23.5, -46.6);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn gallery_query_respects_the_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        let standard = media_query(&pool, &gallery_spec()).unwrap();
+        assert_eq!(standard.total, 3);
+        assert!(standard.items.iter().all(|item| !item.is_hidden));
+
+        let vault = media_query(
+            &pool,
+            &FilterSpec {
+                scope: MediaScope::Vault,
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(vault.total, 1);
+        assert_eq!(vault.items[0].id, "g4");
+    }
+
+    #[test]
+    fn gallery_query_filters_by_type_month_and_no_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        let videos = media_query(
+            &pool,
+            &FilterSpec {
+                file_type: Some("video".into()),
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(videos.total, 1);
+        assert_eq!(videos.items[0].id, "g2");
+
+        let march = media_query(
+            &pool,
+            &FilterSpec {
+                month: Some("2024-03".into()),
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(march.total, 1, "the hidden march row is out of scope");
+        assert_eq!(march.items[0].id, "g1");
+
+        let bare = media_query(
+            &pool,
+            &FilterSpec {
+                no_metadata: true,
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(bare.total, 1);
+        assert_eq!(bare.items[0].id, "g3");
+    }
+
+    #[test]
+    fn gallery_query_search_city_sort_and_paging() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        let search = media_query(
+            &pool,
+            &FilterSpec {
+                search: Some("IMG".into()),
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(search.total, 1);
+        assert_eq!(search.items[0].id, "g1");
+
+        let city = media_query(
+            &pool,
+            &FilterSpec {
+                cities: vec!["sao paulo".into()],
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(city.total, 1, "city match is case-insensitive");
+        assert_eq!(city.items[0].id, "g1");
+        assert_eq!(
+            city.items[0].location.as_ref().unwrap().city.as_deref(),
+            Some("Sao Paulo")
+        );
+
+        // Thumb convention: the DTO carries both sizes, the DB stores 400px.
+        assert!(city.items[0].thumb_400.contains("/400/"));
+        assert!(city.items[0].thumb_200.contains("/200/"));
+
+        let page = media_query(
+            &pool,
+            &FilterSpec {
+                limit: 2,
+                offset: 0,
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(page.items.len(), 2);
+        assert!(page.has_more);
+        assert_eq!(page.items[0].id, "g2", "capturedDesc: newest first");
+
+        let tail = media_query(
+            &pool,
+            &FilterSpec {
+                limit: 2,
+                offset: 2,
+                ..gallery_spec()
+            },
+        )
+        .unwrap();
+        assert_eq!(tail.items.len(), 1);
+        assert!(!tail.has_more);
+    }
+
+    #[test]
+    fn gallery_detail_and_remove_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        assert!(media_detail(&pool, "g1").unwrap().is_some());
+        assert!(media_detail(&pool, "missing").unwrap().is_none());
+
+        assert_eq!(media_remove(&pool, &["g1".to_string()]).unwrap(), 1);
+        assert!(media_detail(&pool, "g1").unwrap().is_none());
+        let left: i64 = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM locations WHERE media_id = 'g1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "locations cascade with the media row");
+        assert_eq!(media_remove(&pool, &[]).unwrap(), 0);
+    }
+
+    // --- §7.6 thumb_meta + the producer's row list (c9) ----------------------
+
+    #[test]
+    fn thumb_jobs_lists_the_rows_both_producers_enqueue() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        let jobs = thumb_jobs(&pool).unwrap();
+
+        assert_eq!(jobs.len(), 4, "every row, hidden ones included");
+        assert_eq!(jobs[0].id, "g1", "ordered so two producers agree");
+        assert!(jobs.iter().all(|job| job.thumb_path.contains("/400/")));
+    }
+
+    #[test]
+    fn thumb_failures_are_recorded_upserted_and_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        thumb_mark_failed(&pool, "g1", "sem ffmpeg").unwrap();
+        // A retry that fails again overwrites the message, never adds a row.
+        thumb_mark_failed(&pool, "g1", "ffmpeg ainda ausente").unwrap();
+        thumb_mark_failed(&pool, "g2", "arquivo corrompido").unwrap();
+
+        let conn = pool.get().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT media_id, thumb_state, error FROM thumb_meta ORDER BY media_id")
+            .unwrap();
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 2, "one row per media, not per attempt");
+        assert_eq!(rows[0].1, "Error");
+        assert_eq!(rows[0].2, "ffmpeg ainda ausente");
+        assert_eq!(rows[1].0, "g2");
+
+        thumb_clear_failed(&pool, "g1").unwrap();
+        thumb_clear_failed(&pool, "g1").unwrap(); // idempotent
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM thumb_meta", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 1, "g2's failure still explains its missing tile");
+    }
+
+    #[test]
+    fn removing_media_removes_its_thumb_failure_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+        thumb_mark_failed(&pool, "g1", "x").unwrap();
+
+        media_remove(&pool, &["g1".to_string()]).unwrap();
+
+        let conn = pool.get().unwrap();
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM thumb_meta", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "ON DELETE CASCADE, §6.1's rule for side tables");
     }
 
     #[test]

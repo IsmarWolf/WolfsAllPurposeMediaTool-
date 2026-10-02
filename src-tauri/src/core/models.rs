@@ -5,15 +5,54 @@
 //! exception is [`RootInfoDto`], which exists to *display* the resolved root in
 //! Settings → Origem (§5.6) and is never persisted.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::paths::RootSource;
 
+/// §10.6.1 `FilterSpec` — the single filter object shared by the gallery and the
+/// snapshot builder (§12.4). Every field is `Option` so an absent filter is
+/// "no constraint", not "match nothing".
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterSpec {
+    /// §6.6: the scope is always explicit — a query cannot be written without it.
+    pub scope: MediaScope,
+    /// Device label filter (`media.device_name`).
+    pub device: Option<String>,
+    /// City names (exact match, case-insensitive).
+    pub cities: Vec<String>,
+    /// `YYYY-MM` month filter on `captured_at`.
+    pub month: Option<String>,
+    /// C7: only files with `has_metadata = 0`.
+    pub no_metadata: bool,
+    /// Fuzzy subsequence match on filename (relative_path).
+    pub search: Option<String>,
+    /// `"image"` or `"video"`.
+    pub file_type: Option<String>,
+    /// Sort order: `capturedDesc` | `capturedAsc` | `name` | `size`.
+    pub sort: String,
+    /// Page size (default 240, max 1000).
+    pub limit: i64,
+    /// Offset for pagination.
+    pub offset: i64,
+}
+
+/// §8.1 `media_query` — one page of gallery results.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaQueryDto {
+    pub items: Vec<MediaDto>,
+    pub total: i64,
+    pub has_more: bool,
+}
+
 /// §6.6: the hidden-media scope rule. Every read-side entry point takes one, so
 /// a gallery query cannot be written without it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MediaScope {
     /// Standard scope ⟺ `is_hidden = 0`.
+    #[default]
     Standard,
     /// Vault scope ⟺ `is_hidden = 1`. Only reachable in Vault Mode (C6).
     Vault,

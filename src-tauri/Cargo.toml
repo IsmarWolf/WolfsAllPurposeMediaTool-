@@ -48,7 +48,11 @@ tooling = []
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2.12.0", features = [] }
+tauri = { version = "2.12.0", features = [
+  # c10 decision (human 2026-10-01): the gallery's <img> sources are served by
+  # Tauri's asset protocol, scoped at runtime to `Thumbnails/` only.
+  "protocol-asset",
+] }
 # §11.3 c8: the native OS folder dialog for the Disco-local source. PLAN §19.1
 # said "all dialogs in-app"; the human overruled it on 2026-10-01 after trying the
 # in-app breadcrumb picker — the real Windows dialog is what people know, and

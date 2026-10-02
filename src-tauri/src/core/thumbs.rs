@@ -55,6 +55,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use image::DynamicImage;
+use tauri::Manager;
 use thiserror::Error;
 
 use crate::core::db::{self, DbError, SqlitePool, ThumbJobRow};
@@ -680,6 +681,26 @@ fn rename_replace(from: &Path, to: &Path) -> Result<(), ThumbError> {
 fn thumb_200_of(thumb_400: &str) -> Option<String> {
     let swapped = thumb_400.replacen("/400/", "/200/", 1);
     (swapped != thumb_400).then_some(swapped)
+}
+
+/// c10 decision (human 2026-10-01): the gallery's `<img>` sources are served by
+/// Tauri's asset protocol, so the webview can read files off the SSD. Only
+/// `Thumbnails/` is ever scoped — never `Media/`, and never `.vault/thumbs`
+/// (C6: the vault's tiles stay unreachable until a session exists, c18).
+///
+/// `previous` is the root the scope was granted for before `[Recalcular Raiz]`;
+/// it is forbidden first, because Tauri v2's scope has no removal.
+pub fn scope_thumbnails(app: &tauri::AppHandle, resolver: &PathResolver, previous: Option<&Path>) {
+    let scope = app.asset_protocol_scope();
+    if let Some(old_root) = previous {
+        let _ = scope.forbid_directory(old_root.join(crate::core::paths::THUMBNAILS_DIR), true);
+    }
+    let thumbs = resolver.thumb_root();
+    if let Err(error) = scope.allow_directory(&thumbs, true) {
+        // Non-fatal on purpose (§5.5's degraded-boot rule): the grid then shows
+        // its no-thumbnail state instead of tiles.
+        eprintln!("[wolfsmedia] asset scope for {}: {error}", thumbs.display());
+    }
 }
 
 /// The extension, lowercased — `IMG_0001.JPG` is `jpg` whichever device wrote

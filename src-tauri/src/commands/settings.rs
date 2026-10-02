@@ -23,8 +23,18 @@ pub fn resolve_app_root(state: State<'_, AppState>) -> Result<RootInfoDto, AppEr
 /// the root moved, the tree and the pool are rebuilt; the UI says so via
 /// `changed` and re-reads the Dashboard numbers.
 #[tauri::command]
-pub fn settings_recalc_root(state: State<'_, AppState>) -> Result<RecalcRootDto, AppError> {
+pub fn settings_recalc_root(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RecalcRootDto, AppError> {
+    // c10: the asset scope is bound to a root, so a moved root re-grants it —
+    // the previous `Thumbnails/` is forbidden, since v2's scope has no removal.
+    let previous = state.snapshot().resolver.root().to_path_buf();
     let (info, changed) = state.recalc_root()?;
+    if changed {
+        let snapshot = state.snapshot();
+        crate::core::thumbs::scope_thumbnails(&app, &snapshot.resolver, Some(&previous));
+    }
     Ok(RecalcRootDto { changed, info })
 }
 
@@ -63,7 +73,7 @@ pub fn app_versions() -> AppVersionsDto {
 /// §8.1 `media_reveal` will reuse this: `explorer /select,<abs>`. Both the
 /// `/select` form and the plain-folder form live in one place so the quoting
 /// rule (a path with spaces needs no extra quoting — it is one argv entry).
-fn reveal(path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn reveal(path: &std::path::Path) -> Result<(), AppError> {
     std::process::Command::new("explorer")
         .arg(path)
         .spawn()

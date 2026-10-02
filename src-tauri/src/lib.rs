@@ -13,6 +13,8 @@ pub mod state;
 pub use error::AppError;
 pub use state::AppState;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Boot is §5.5 and it is deliberately non-fatal: a read-only SSD must show a
@@ -28,12 +30,25 @@ pub fn run() {
         // everything else in the app stays in-app per §19.1.
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
+        // c10: the webview may read `Thumbnails/` through the asset protocol,
+        // and nothing else. The root is known at boot (§5.5), so this is where
+        // the grant happens; `[Recalcular Raiz]` re-grants it (commands/settings).
+        .setup(|app| {
+            let state = app.state::<AppState>();
+            let snapshot = state.snapshot();
+            core::thumbs::scope_thumbnails(app.handle(), &snapshot.resolver, None);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::media::stats_get,
             commands::media::vault_status,
             commands::media::scan_start,
             commands::media::scan_cancel,
             commands::media::geo_lookup,
+            commands::media::media_query,
+            commands::media::media_detail,
+            commands::media::media_reveal,
+            commands::media::media_remove,
             commands::media::thumbs_rebuild_all,
             commands::settings::resolve_app_root,
             commands::settings::settings_recalc_root,

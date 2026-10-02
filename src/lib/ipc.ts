@@ -8,7 +8,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { toAppError } from './errors'
 import type {
   AppVersionsDto,
+  FilterSpec,
   GeoDto,
+  MediaDto,
+  MediaQueryDto,
   RecalcRootDto,
   RootInfoDto,
   ScanSummaryDto,
@@ -61,3 +64,15 @@ export const scanCancel = () => call<void>('scan_cancel')
 /** §8.1 `geo_lookup` — debug/testing only (§7.5.1 decision 8). */
 export const geoLookup = (lat: number, lon: number) =>
   call<GeoDto | null>('geo_lookup', { lat, lon })
+
+/** §8.1 `media_query` — one page of gallery results. */
+export const mediaQuery = (spec: FilterSpec) => call<MediaQueryDto>('media_query', { spec })
+
+/** §8.1 `media_detail` — one media item for the lightbox. */
+export const mediaDetail = (id: string) => call<MediaDto | null>('media_detail', { id })
+
+/** §8.1 `media_reveal` — Explorer on the media's folder. */
+export const mediaReveal = (id: string) => call<void>('media_reveal', { id })
+
+/** §8.1 `media_remove` — delete media rows by id. */
+export const mediaRemove = (ids: string[]) => call<number>('media_remove', { ids })

@@ -91,6 +91,49 @@ export interface GeoDto {
   longitude: number
 }
 
+/** §7.1 `MediaDto` — one gallery row. */
+export interface MediaDto {
+  id: string
+  relativePath: string
+  thumb200: string
+  thumb400: string
+  fileHash: string
+  fileSize: number
+  fileType: string
+  capturedAt: string | null
+  hasMetadata: boolean
+  deviceName: string | null
+  isHidden: boolean
+  location: {
+    city: string | null
+    state: string | null
+    country: string | null
+    latitude: number | null
+    longitude: number | null
+  } | null
+}
+
+/** §10.6.1 `FilterSpec` — the single filter object. */
+export interface FilterSpec {
+  scope: MediaScopeDto
+  device: string | null
+  cities: string[]
+  month: string | null
+  noMetadata: boolean
+  search: string | null
+  fileType: string | null
+  sort: string
+  limit: number
+  offset: number
+}
+
+/** §8.1 `media_query` — one page of gallery results. */
+export interface MediaQueryDto {
+  items: MediaDto[]
+  total: number
+  hasMore: boolean
+}
+
 /** `wolfs://toast` payload (§9.2). */
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'
 

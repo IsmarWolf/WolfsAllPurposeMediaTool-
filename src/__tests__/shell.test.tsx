@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from '../app/AppShell'
@@ -47,6 +47,41 @@ const invokeMock = vi.mocked(invoke)
 const { open } = await import('@tauri-apps/plugin-dialog')
 const openMock = vi.mocked(open)
 
+const MEDIA_PAGE = {
+  items: [
+    {
+      id: 'g1',
+      relativePath: 'Media/PC/2024/03/IMG_1.jpg',
+      thumb200: 'Thumbnails/200/PC/2024/03/IMG_1.webp',
+      thumb400: 'Thumbnails/400/PC/2024/03/IMG_1.webp',
+      fileHash: 'h1',
+      fileSize: 1000,
+      fileType: 'image',
+      capturedAt: '2024-03-15T10:00:00',
+      hasMetadata: true,
+      deviceName: 'PC',
+      isHidden: false,
+      location: null,
+    },
+    {
+      id: 'g2',
+      relativePath: 'Media/PC/2024/04/VID_2.mov',
+      thumb200: 'Thumbnails/200/PC/2024/04/VID_2.webp',
+      thumb400: 'Thumbnails/400/PC/2024/04/VID_2.webp',
+      fileHash: 'h2',
+      fileSize: 2000,
+      fileType: 'video',
+      capturedAt: '2024-04-01T10:00:00',
+      hasMetadata: true,
+      deviceName: 'PC',
+      isHidden: false,
+      location: null,
+    },
+  ],
+  total: 2,
+  hasMore: false,
+}
+
 /** The happy path every screen needs; individual tests override one command. */
 function defaultMock(command: string, _args?: unknown): unknown {
   switch (command) {
@@ -58,6 +93,10 @@ function defaultMock(command: string, _args?: unknown): unknown {
       return VAULT
     case 'app_versions':
       return VERSIONS
+    case 'media_query':
+      return { items: [], total: 0, hasMore: false }
+    case 'media_detail':
+      return MEDIA_PAGE.items[0]
     default:
       throw new Error(`comando não mockado: ${command}`)
   }
@@ -539,5 +578,83 @@ describe('Disco local (C-3n, c8) — the copy-only ingest (§11.3)', () => {
       resolveScan(SCAN_DONE)
     })
     expect(await screen.findByText(/Escaneado:/)).not.toBeNull()
+  })
+})
+
+describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
+  async function openMedia() {
+    await renderShell()
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+  }
+
+  it('renders tiles for the queried page and the live total', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+
+    expect(await screen.findAllByTestId('media-tile')).toHaveLength(2)
+    // The video tile carries the duration badge; the image does not.
+    expect(screen.getByText('▶')).not.toBeNull()
+    expect(await screen.findByTestId('media-grid')).not.toBeNull()
+  })
+
+  it('shows the empty state when the library has nothing and no filter is set', async () => {
+    await openMedia()
+
+    expect(await screen.findByText('Esta pasta está vazia.')).not.toBeNull()
+  })
+
+  it('asks for the standard scope and the default sort on the first read', async () => {
+    await openMedia()
+    await screen.findByText('Esta pasta está vazia.')
+
+    const queryCalls = invokeMock.mock.calls.filter(([command]) => command === 'media_query')
+    expect(queryCalls.length).toBeGreaterThan(0)
+    expect(queryCalls[0][1]).toEqual({
+      spec: expect.objectContaining({ scope: 'standard', sort: 'capturedDesc', offset: 0 }),
+    })
+  })
+
+  it('opens the lightbox on tile click and closes it on Esc', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.click(tiles[0])
+
+    const dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(within(dialog).getByText('IMG_1.jpg')).not.toBeNull()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+  })
+
+  it('shows Clear All only when two or more filters are active (C10)', async () => {
+    await openMedia()
+    await screen.findByText('Esta pasta está vazia.')
+
+    // One filter: chips render, Clear All does not.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'IMG' } })
+    expect(await screen.findByText(/Buscar: IMG/)).not.toBeNull()
+    expect(screen.queryByText('Limpar tudo')).toBeNull()
+
+    // Two filters: Clear All appears and clears both.
+    fireEvent.change(screen.getByLabelText('Tipo'), { target: { value: 'image' } })
+    expect(await screen.findByText('Limpar tudo')).not.toBeNull()
+    fireEvent.click(screen.getByText('Limpar tudo'))
+    expect(screen.queryByText(/Buscar: IMG/)).toBeNull()
   })
 })

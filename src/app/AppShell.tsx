@@ -94,7 +94,7 @@ export function AppShell() {
               onNavigate={navigate}
             />
           ) : null}
-          {route === 'media' ? <MediaScreen /> : null}
+          {route === 'media' ? <MediaScreen selection={selection} /> : null}
           {route === 'lists' ? <ListsScreen /> : null}
           {route === 'backup' ? <BackupScreen /> : null}
           {route === 'settings' ? <SettingsScreen /> : null}

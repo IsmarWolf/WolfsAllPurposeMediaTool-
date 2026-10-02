@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::core::db::{self, SqlitePool};
-use crate::core::models::{GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto};
+use crate::core::models::{FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto};
 use crate::core::paths::PathResolver;
 use crate::core::scanner;
 use crate::core::thumbs;
@@ -227,6 +227,53 @@ pub async fn geo_lookup(
         .map_err(|error| {
             AppError::Unavailable(format!("a thread de geocodificação morreu: {error}"))
         })
+}
+
+/// §8.1 `media_query` — one page of gallery results. The scope is always
+/// explicit (§6.6); the frontend never chooses it implicitly.
+#[tauri::command]
+pub fn media_query(
+    state: State<'_, AppState>,
+    spec: FilterSpec,
+) -> Result<crate::core::models::MediaQueryDto, AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    Ok(db::media_query(&pool, &spec)?)
+}
+
+/// §8.1 `media_detail` — one media item for the lightbox.
+#[tauri::command]
+pub fn media_detail(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<crate::core::models::MediaDto>, AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    Ok(db::media_detail(&pool, &id)?)
+}
+
+/// §8.1 `media_reveal` — Explorer on the media's folder. The path is derived
+/// from the resolver, never accepted from the frontend.
+#[tauri::command]
+pub fn media_reveal(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    let media = db::media_detail(&pool, &id)?
+        .ok_or_else(|| AppError::Conflict(format!("media não encontrado: {id}")))?;
+    let abs = snapshot.resolver.rel_to_abs(&media.relative_path)?;
+    let parent = abs
+        .parent()
+        .ok_or_else(|| AppError::Conflict("sem pasta pai".to_string()))?;
+    super::settings::reveal(parent)
+}
+
+/// §8.1 `media_remove` — delete media rows by id. The frontend always confirms
+/// first (C7/§14); this is the backend half.
+#[tauri::command]
+pub fn media_remove(state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    db::media_remove(&pool, &ids).map_err(AppError::from)
 }
 
 /// `App/bin/ffmpeg.exe`, or `None` when it is not there. §3.3's finding on this
