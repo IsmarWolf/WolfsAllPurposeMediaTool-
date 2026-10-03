@@ -125,8 +125,8 @@
   "backup.pickerTitle": "Selecionar pasta de origem",
   "backup.importStart": "Iniciar importação",
   "backup.importChange": "Trocar pasta",
-  "backup.usbComing": "A ingestão por USB chega no c11.",
-  "backup.wifiComing": "A ingestão por Wi-Fi chega no c12.",
+  "backup.usbComing": "A ingestão por USB chega no c12.",
+  "backup.wifiComing": "A ingestão por Wi-Fi chega no c11.",
 
   "settings.subtitle": "Raiz do SSD, origem e manutenção",
   "settings.originTitle": "Origem",
