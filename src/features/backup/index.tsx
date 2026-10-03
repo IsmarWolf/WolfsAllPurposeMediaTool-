@@ -17,8 +17,8 @@ type PickedFolder = {
  * §11.4/§12.1 Backup — **one** page with USB | Wi-Fi | Disco local as source
  * tabs (C-15 / C-16 amendment, human-confirmed 2026-09-29 and built in c8).
  * The tabs are the transport, not separate screens: the USB/Wi-Fi machinery is
- * c11/c12, and the Disco local pane reuses `[C-3f]`/`[C-3g]`/`[C-3h]` against
- * the §7.3 pipeline in its **copy-only** form (§11.3, §14 — the source is the
+ * c11/c12, and the Disco local pane reuses [C-3f]/[C-3g]/[C-3h] against
+ * the §7.3 pipeline in its copy-only form (§11.3, §14 — the source is the
  * human's tree and is never mutated).
  */
 export function BackupScreen() {
@@ -82,65 +82,133 @@ export function BackupScreen() {
         ))}
       </div>
 
-      {source === 'usb' ? (
-        <p className="screen__todo">{t('backup.usbComing')}</p>
-      ) : source === 'wifi' ? (
-        <p className="screen__todo">{t('backup.wifiComing')}</p>
-      ) : (
-        <section className="md-card backup-local" data-testid="c-3n-local">
-          <h2>{t('backup.local')}</h2>
-          <p>{t('backup.localCopyOnly')}</p>
+      <section className="md-card backup-section" data-testid="c-3n-section">
+        <h2>{t(`backup.${source}`)}</h2>
+        <p>{t('backup.localCopyOnly')}</p>
 
-          {folder ? (
-            <>
-              <p className="md-card__hint md-card__hint--path" title={folder.path}>
-                {folder.path}
-              </p>
+        {source === 'local' ? (
+          <div>
+            {folder ? (
+              <>
+                <p className="md-card__hint md-card__hint--path" title={folder.path}>
+                  {folder.path}
+                </p>
 
-              <div className="md-card__row">
-                {scan.running ? (
-                  <>
-                    <Button variant="tonal" onClick={scan.cancel}>
-                      {t('dash.scanCancel')}
+                <div className="md-card__row">
+                  {scan.running ? (
+                    <>
+                      <Button variant="tonal" onClick={scan.cancel}>
+                        {t('dash.scanCancel')}
+                      </Button>
+                      <span className="md-card__hint">
+                        {scan.progress?.total
+                          ? `${formatCount(scan.progress.current)} / ${formatCount(scan.progress.total)}`
+                          : t('dash.scanCollecting')}
+                      </span>
+                    </>
+                  ) : (
+                    <Button variant="filled" onClick={scan.start} data-testid="c-3n4-start">
+                      {t('backup.importStart')}
                     </Button>
-                    <span className="md-card__hint">
-                      {scan.progress?.total
-                        ? `${formatCount(scan.progress.current)} / ${formatCount(scan.progress.total)}`
-                        : t('dash.scanCollecting')}
-                    </span>
-                  </>
-                ) : (
-                  <Button variant="filled" onClick={scan.start} data-testid="c-3n4-start">
-                    {t('backup.importStart')}
+                  )}
+                  <Button variant="text" onClick={pickFolder}>
+                    {t('backup.importChange')}
                   </Button>
-                )}
-                <Button variant="text" onClick={pickFolder}>
-                  {t('backup.importChange')}
+                </div>
+
+                {scan.progress && scan.progress.total > 0 ? (
+                  <div className="md-meter" aria-label={t('dash.scanProgressLabel')}>
+                    <div
+                      className="md-meter__fill md-meter__fill--images"
+                      style={{
+                        width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%`,
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="md-card__row">
+                <Button variant="tonal" onClick={pickFolder} data-testid="c-3n1-pick">
+                  {t('backup.pickFolder')}
                 </Button>
               </div>
-
-              {scan.progress && scan.progress.total > 0 ? (
-                <div className="md-meter" aria-label={t('dash.scanProgressLabel')}>
-                  <div
-                    className="md-meter__fill md-meter__fill--images"
-                    style={{
-                      width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%`,
-                    }}
-                  />
-                </div>
-              ) : null}
-            </>
-          ) : (
+            )}
+          </div>
+        ) : source === 'usb' ? (
+          <div>
+            <p className="md-card__hint">Device: iPhone (via USB)</p>
             <div className="md-card__row">
-              <Button variant="tonal" onClick={pickFolder} data-testid="c-3n1-pick">
-                {t('backup.pickFolder')}
+              {scan.running ? (
+                <>
+                  <Button variant="tonal" onClick={scan.cancel}>
+                    {t('dash.scanCancel')}
+                  </Button>
+                  <span className="md-card__hint">
+                    {scan.progress?.total
+                      ? `${formatCount(scan.progress.current)} / ${formatCount(scan.progress.total)}`
+                      : t('dash.scanCollecting')}
+                  </span>
+                </>
+              ) : (
+                <Button variant="filled" onClick={scan.start} data-testid="c-3n4-start">
+                  {t('backup.importStart')}
+                </Button>
+              )}
+              <Button variant="text" onClick={pickFolder}>
+                {t('backup.importChange')}
               </Button>
             </div>
-          )}
 
-          {pickError ? <p className="md-card__hint md-card__hint--error">{pickError}</p> : null}
-        </section>
-      )}
+            {scan.progress && scan.progress.total > 0 ? (
+              <div className="md-meter" aria-label={t('dash.scanProgressLabel')}>
+                <div
+                  className="md-meter__fill md-meter__fill--images"
+                  style={{
+                    width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : source === 'wifi' ? (
+          <div>
+            <p className="md-card__hint">Device: iPhone (via Wi-Fi)</p>
+            <div className="md-card__row">
+              {scan.running ? (
+                <>
+                  <Button variant="tonal" onClick={scan.cancel}>
+                    {t('dash.scanCancel')}
+                  </Button>
+                  <span className="md-card__hint">
+                    {scan.progress?.total
+                      ? `${formatCount(scan.progress.current)} / ${formatCount(scan.progress.total)}`
+                      : t('dash.scanCollecting')}
+                  </span>
+                </>
+              ) : (
+                <Button variant="filled" onClick={scan.start} data-testid="c-3n4-start">
+                  {t('backup.importStart')}
+                </Button>
+              )}
+              <Button variant="text" onClick={pickFolder}>
+                {t('backup.importChange')}
+              </Button>
+            </div>
+
+            {scan.progress && scan.progress.total > 0 ? (
+              <div className="md-meter" aria-label={t('dash.scanProgressLabel')}>
+                <div
+                  className="md-meter__fill md-meter__fill--images"
+                  style={{
+                    width: `${ratioOf(scan.progress.current, scan.progress.total) * 100}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </div>
   )
 }
