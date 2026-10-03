@@ -44,6 +44,9 @@ custom-protocol = ["tauri/custom-protocol"]
 # §7.5: the offline cities-index producer and the format writer. Never on for
 # the app; see the `[[bin]] gen-geonames` note above.
 tooling = []
+# c12: USB ingestion via Windows Portable Device (WPD) API, gated behind
+# the `usb-ingest` feature so normal builds don't pull in the Windows COM crate.
+usb-ingest = ["windows"]
 
 [dependencies]
 serde_json = "1.0"
@@ -53,39 +56,26 @@ tauri = { version = "2.12.0", features = [
   # Tauri's asset protocol, scoped at runtime to `Thumbnails/` only.
   "protocol-asset",
 ] }
-# §11.3 c8: the native OS folder dialog for the Disco-local source. PLAN §19.1
-# said "all dialogs in-app"; the human overruled it on 2026-10-01 after trying the
-# in-app breadcrumb picker — the real Windows dialog is what people know, and
-# rebuilding it was worse. This is the ONE sanctioned native dialog.
 tauri-plugin-dialog = "2"
 thiserror = "2.0"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 kamadak-exif = "0.6.1"
-# PLAN §7.6 (c9): decode/resize for the Rust thumbnail path. HEIC/AVIF and every
-# video go to ffmpeg instead, so the codecs are exactly the formats §7.4.1 lists
-# for the image crate — no avif/heif features, no C build here.
+anyhow = "1.0"
 image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "png",
   "tiff",
   "webp",
 ] }
-# §7.6 encodes WebP at q=80, and `image`'s own encoder is lossless-only (its
-# docs point at libwebp for lossy). libwebp-sys compiles its C with `cc`, the
-# same mechanism rusqlite's bundled SQLite already uses on this box.
 webp = "0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
-# PLAN §7.3 step 1 (recursive Media/<device> walk) and step 1's sha256 dedupe,
-# plus the §22 media id. All three were already in the tree transitively through
-# Tauri, so this is a promotion to direct deps, not a new dependency.
 walkdir = "2.5.0"
 sha2 = "0.10.9"
 uuid = { version = "1.26.1", features = ["v4"] }
 tiny_http = "0.12.0"
 qrcodegen = "1.8.0"
 if-addrs = "0.15.0"
-
-[dev-dependencies]
-tempfile = "3.20"
+windows = { version = "0.36", optional = true, features = ["Win32_Foundation", "Win32_System_Com"] }
+tempfile = "3.10"

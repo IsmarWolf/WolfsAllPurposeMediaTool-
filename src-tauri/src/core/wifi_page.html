@@ -15,18 +15,41 @@
         --ok: #146c2e;
         --bad: #b3261e;
       }
-      * { box-sizing: border-box; }
+      * {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
         padding: 20px 18px 40px;
-        font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font:
+          16px/1.45 system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
         color: var(--on-surface);
         background: var(--surface);
       }
-      h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; color: var(--primary); }
-      p.lead { margin: 0 0 22px; color: var(--surface-low); opacity: 0.75; font-size: 14px; }
-      label { display: block; font-size: 13px; font-weight: 500; margin: 0 0 6px; }
-      input[type="text"], input[type="file"] {
+      h1 {
+        font-size: 22px;
+        font-weight: 500;
+        margin: 0 0 4px;
+        color: var(--primary);
+      }
+      p.lead {
+        margin: 0 0 22px;
+        color: var(--surface-low);
+        opacity: 0.75;
+        font-size: 14px;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        margin: 0 0 6px;
+      }
+      input[type='text'],
+      input[type='file'] {
         width: 100%;
         padding: 12px 14px;
         border: 1px solid var(--outline);
@@ -35,9 +58,17 @@
         color: inherit;
         font: inherit;
       }
-      input[type="file"] { padding: 10px; }
-      .field { margin-bottom: 18px; }
-      .hint { font-size: 12px; opacity: 0.7; margin: 6px 0 0; }
+      input[type='file'] {
+        padding: 10px;
+      }
+      .field {
+        margin-bottom: 18px;
+      }
+      .hint {
+        font-size: 12px;
+        opacity: 0.7;
+        margin: 6px 0 0;
+      }
       button {
         width: 100%;
         padding: 14px;
@@ -48,22 +79,64 @@
         font: 500 16px/1 inherit;
         cursor: pointer;
       }
-      button[disabled] { opacity: 0.45; cursor: default; }
-      ul { list-style: none; margin: 20px 0 0; padding: 0; }
-      li { padding: 10px 0; border-top: 1px solid rgba(121, 116, 126, 0.3); font-size: 14px; }
-      .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .state { font-size: 12px; opacity: 0.75; }
-      .bar { height: 4px; margin-top: 6px; border-radius: 2px; background: rgba(121, 116, 126, 0.25); overflow: hidden; }
-      .bar > i { display: block; height: 100%; width: 0; background: var(--primary); }
-      .ok { color: var(--ok); }
-      .bad { color: var(--bad); }
-      footer { margin-top: 28px; font-size: 12px; opacity: 0.7; }
-      a { color: var(--primary); }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: default;
+      }
+      ul {
+        list-style: none;
+        margin: 20px 0 0;
+        padding: 0;
+      }
+      li {
+        padding: 10px 0;
+        border-top: 1px solid rgba(121, 116, 126, 0.3);
+        font-size: 14px;
+      }
+      .name {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .state {
+        font-size: 12px;
+        opacity: 0.75;
+      }
+      .bar {
+        height: 4px;
+        margin-top: 6px;
+        border-radius: 2px;
+        background: rgba(121, 116, 126, 0.25);
+        overflow: hidden;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--primary);
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      footer {
+        margin-top: 28px;
+        font-size: 12px;
+        opacity: 0.7;
+      }
+      a {
+        color: var(--primary);
+      }
     </style>
   </head>
   <body>
     <h1>Enviar para o SSD</h1>
-    <p class="lead">As fotos e vídeos vão direto para a pasta do aparelho no SSD. Ninguém sai da sua rede.</p>
+    <p class="lead">
+      As fotos e vídeos vão direto para a pasta do aparelho no SSD. Ninguém sai da sua rede.
+    </p>
 
     <div class="field">
       <label for="device">Nome do aparelho</label>
@@ -87,101 +160,103 @@
     <script>
       // §7.8: Media/<selected device>/ — the label is chosen here, on the phone,
       // because there is no app on it. The guess is only a starting point.
-      var ua = navigator.userAgent || "";
+      var ua = navigator.userAgent || ''
       function guess() {
-        if (/iPhone/i.test(ua)) return "iPhone";
-        if (/iPad/i.test(ua)) return "iPad";
-        if (/Android/i.test(ua)) return "Android";
-        if (/Windows Phone/i.test(ua)) return "Windows Phone";
-        if (/Macintosh|Mac OS X/i.test(ua)) return "iPhone";
-        return "Celular";
+        if (/iPhone/i.test(ua)) return 'iPhone'
+        if (/iPad/i.test(ua)) return 'iPad'
+        if (/Android/i.test(ua)) return 'Android'
+        if (/Windows Phone/i.test(ua)) return 'Windows Phone'
+        if (/Macintosh|Mac OS X/i.test(ua)) return 'iPhone'
+        return 'Celular'
       }
-      var device = document.getElementById("device");
-      device.value = guess();
+      var device = document.getElementById('device')
+      device.value = guess()
 
-      var files = document.getElementById("files");
-      var go = document.getElementById("go");
-      var log = document.getElementById("log");
-      var summary = document.getElementById("summary");
+      var files = document.getElementById('files')
+      var go = document.getElementById('go')
+      var log = document.getElementById('log')
+      var summary = document.getElementById('summary')
 
-      files.addEventListener("change", function () {
-        go.disabled = files.files.length === 0;
-      });
+      files.addEventListener('change', function () {
+        go.disabled = files.files.length === 0
+      })
 
       function row(name) {
-        var li = document.createElement("li");
-        var label = document.createElement("span");
-        label.className = "name";
-        label.textContent = name;
-        var state = document.createElement("span");
-        state.className = "state";
-        state.textContent = "aguardando…";
-        var bar = document.createElement("div");
-        bar.className = "bar";
-        var fill = document.createElement("i");
-        bar.appendChild(fill);
-        li.appendChild(label);
-        li.appendChild(state);
-        li.appendChild(bar);
-        log.appendChild(li);
-        return { state: state, fill: fill };
+        var li = document.createElement('li')
+        var label = document.createElement('span')
+        label.className = 'name'
+        label.textContent = name
+        var state = document.createElement('span')
+        state.className = 'state'
+        state.textContent = 'aguardando…'
+        var bar = document.createElement('div')
+        bar.className = 'bar'
+        var fill = document.createElement('i')
+        bar.appendChild(fill)
+        li.appendChild(label)
+        li.appendChild(state)
+        li.appendChild(bar)
+        log.appendChild(li)
+        return { state: state, fill: fill }
       }
 
       function send(file, name) {
         return new Promise(function (resolve) {
-          var line = row(name);
-          var body = new FormData();
-          body.append("device", device.value || "Celular");
-          body.append("file", file, file.name);
+          var line = row(name)
+          var body = new FormData()
+          body.append('device', device.value || 'Celular')
+          body.append('file', file, file.name)
 
-          var request = new XMLHttpRequest();
-          request.open("POST", "/upload");
+          var request = new XMLHttpRequest()
+          request.open('POST', '/upload')
           request.upload.onprogress = function (event) {
             if (event.lengthComputable) {
-              var percent = Math.round((event.loaded / event.total) * 100);
-              line.fill.style.width = percent + "%";
-              line.state.textContent = percent + "%";
+              var percent = Math.round((event.loaded / event.total) * 100)
+              line.fill.style.width = percent + '%'
+              line.state.textContent = percent + '%'
             }
-          };
+          }
           request.onload = function () {
-            var ok = request.status === 200;
-            line.state.textContent = ok ? "enviado ✓" : "falhou (" + request.status + ")";
-            line.state.className = "state " + (ok ? "ok" : "bad");
-            line.fill.style.width = ok ? "100%" : line.fill.style.width;
-            resolve(ok);
-          };
+            var ok = request.status === 200
+            line.state.textContent = ok ? 'enviado ✓' : 'falhou (' + request.status + ')'
+            line.state.className = 'state ' + (ok ? 'ok' : 'bad')
+            line.fill.style.width = ok ? '100%' : line.fill.style.width
+            resolve(ok)
+          }
           request.onerror = function () {
-            line.state.textContent = "falhou (rede)";
-            line.state.className = "state bad";
-            resolve(false);
-          };
-          request.send(body);
-        });
+            line.state.textContent = 'falhou (rede)'
+            line.state.className = 'state bad'
+            resolve(false)
+          }
+          request.send(body)
+        })
       }
 
-      go.addEventListener("click", async function () {
-        go.disabled = true;
-        device.readOnly = true;
-        var chosen = Array.prototype.slice.call(files.files);
-        var sent = 0;
-        var failed = 0;
+      go.addEventListener('click', async function () {
+        go.disabled = true
+        device.readOnly = true
+        var chosen = Array.prototype.slice.call(files.files)
+        var sent = 0
+        var failed = 0
         // Sequential on purpose: a phone on Wi-Fi is not a network with 2 GB/s,
         // and parallel requests only make every file slower.
         for (var index = 0; index < chosen.length; index++) {
           if (await send(chosen[index], chosen[index].name)) {
-            sent++;
+            sent++
           } else {
-            failed++;
+            failed++
           }
         }
-        var done = await fetch("/done", { method: "POST" });
-        var payload = await done.json();
+        var done = await fetch('/done', { method: 'POST' })
+        var payload = await done.json()
         summary.innerHTML =
-          "<span class='ok'>" + sent + " enviado(s)</span>" +
-          (failed ? " · <span class='bad'>" + failed + " falharam</span>" : "") +
-          "<br>O SSD está processando. Pode fechar esta página.";
-        summary.className = "";
-      });
+          "<span class='ok'>" +
+          sent +
+          ' enviado(s)</span>' +
+          (failed ? " · <span class='bad'>" + failed + ' falharam</span>' : '') +
+          '<br>O SSD está processando. Pode fechar esta página.'
+        summary.className = ''
+      })
     </script>
   </body>
 </html>

@@ -2,4 +2,5 @@
 
 pub mod media;
 pub mod settings;
+pub mod usb;
 pub mod wifi;
