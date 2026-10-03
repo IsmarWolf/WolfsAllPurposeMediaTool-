@@ -6,3 +6,4 @@ pub mod models;
 pub mod paths;
 pub mod scanner;
 pub mod thumbs;
+pub mod wifi;

@@ -50,6 +50,8 @@ pub fn run() {
             commands::media::media_reveal,
             commands::media::media_remove,
             commands::media::thumbs_rebuild_all,
+            commands::wifi::ingest_wifi_start,
+            commands::wifi::ingest_wifi_stop,
             commands::settings::resolve_app_root,
             commands::settings::settings_recalc_root,
             commands::settings::settings_reveal_root,

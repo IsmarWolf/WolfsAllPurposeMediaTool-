@@ -93,6 +93,12 @@ pub struct AppState {
     /// `Arc` because the job thread outlives the command that started it and has
     /// to give the slot back when it ends.
     jobs: Arc<JobRegistry>,
+    /// c11: the live Wi-Fi listener, if `[C-3i Iniciar servidor]` started one.
+    /// Also outside the `RwLock` — the server owns its own threads and is
+    /// deliberately *not* tied to the root's snapshot, so a recalculated root
+    /// stops it explicitly instead of letting it write into a volume the app no
+    /// longer uses.
+    wifi: Arc<Mutex<Option<Arc<crate::core::wifi::WifiServer>>>>,
 }
 
 impl AppState {
@@ -109,6 +115,7 @@ impl AppState {
         Self {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
             jobs: Arc::new(JobRegistry::default()),
+            wifi: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -118,6 +125,26 @@ impl AppState {
 
     pub fn jobs(&self) -> Arc<JobRegistry> {
         Arc::clone(&self.jobs)
+    }
+
+    /// c11: the running listener, if any. `ingest_wifi_start` is idempotent
+    /// against it, and `ingest_wifi_stop` is the only thing that clears it.
+    pub fn wifi_server(&self) -> Option<Arc<crate::core::wifi::WifiServer>> {
+        self.wifi.lock().expect("AppState wifi poisoned").clone()
+    }
+
+    pub fn set_wifi_server(&self, server: Option<Arc<crate::core::wifi::WifiServer>>) {
+        *self.wifi.lock().expect("AppState wifi poisoned") = server;
+    }
+
+    /// Stops and forgets the listener. Called by `[C-3k Stop]` and by
+    /// `[Recalcular Raiz]`: an upload landing in the old volume after the root
+    /// moved would put bytes where the app can no longer find them.
+    pub fn stop_wifi_server(&self) {
+        if let Some(server) = self.wifi_server() {
+            let _ = server.stop();
+            self.set_wifi_server(None);
+        }
     }
 
     /// What Settings → Origem and `[Z1d]` show (§5.6, §11.0).
@@ -157,6 +184,11 @@ impl AppState {
         };
 
         *self.inner.write().expect("AppState lock poisoned") = snapshot;
+        if changed {
+            // c11: the listener writes into the root it was built with, and the
+            // tree it writes to no longer exists.
+            self.stop_wifi_server();
+        }
         Ok((info, changed))
     }
 
@@ -306,6 +338,7 @@ mod tests {
         AppState {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
             jobs: Arc::new(JobRegistry::default()),
+            wifi: Arc::new(Mutex::new(None)),
         }
     }
 

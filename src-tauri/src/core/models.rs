@@ -247,6 +247,35 @@ pub struct ThumbSummaryDto {
     pub failed: u32,
 }
 
+/// §8.1 `ingest_wifi_start`: what the Backup → Wi-Fi pane paints. `qr_matrix` is
+/// row-major with `true` = a dark module, already generated on the Rust side so
+/// the frontend only draws squares (c11; the pane itself is c13).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WifiInfoDto {
+    pub lan_ip: String,
+    pub qr_matrix: Vec<Vec<bool>>,
+    pub port: u16,
+    /// Live counter: uploads already accepted by this session.
+    pub uploads: i64,
+}
+
+/// `wolfs://progress/ingest` (§9.2). One tagged enum because the pane needs all
+/// three facts and the channel carries no job id: how the scan is going, what it
+/// finally did (the dedupe count is in here), and that the counts moved.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum IngestEventDto {
+    Progress(ScanProgressDto),
+    Summary(ScanSummary),
+    DbChanged,
+    /// One device failed; the pass carried on with the rest (§12.1).
+    Failed {
+        device: String,
+        message: String,
+    },
+}
+
 /// §8.1 `root_info` + what Settings → Origem shows (§5.6).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

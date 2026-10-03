@@ -370,7 +370,7 @@ fn organize(
     Ok((free, true))
 }
 
-fn free_destination(target: &Path) -> Result<PathBuf, AppError> {
+pub(crate) fn free_destination(target: &Path) -> Result<PathBuf, AppError> {
     if !target.exists() {
         return Ok(target.to_path_buf());
     }
