@@ -82,6 +82,69 @@ export interface ScanProgressDto {
   inserted: number
 }
 
+/**
+ * §8.1 `ingest_wifi_start` (c11) — the live facts of the Wi-Fi server, as the
+ * Backup → Wi-Fi pane paints them.
+ */
+export interface WifiInfoDto {
+  lanIp: string
+  /**
+   * Row-major QR modules with `true` = dark. Generated in Rust (c11 §7.8) so the
+   * pane only draws squares and the QR encoder stays in one place.
+   */
+  qrMatrix: boolean[][]
+  port: number
+  /** Live counter: uploads already accepted by this session. */
+  uploads: number
+}
+
+/**
+ * §8.1 `devices_list` (c12) — one attached MTP/PTP device.
+ *
+ * Deliberately small. The `winmtp` wrapper covers enumeration and content but not
+ * the device-level capability properties, so §8.1's `capacity` / `free` /
+ * `protocol` are **not** claimed here: guessing them from a Windows handle would
+ * be worse than omitting them, and PLAN §8.1 needs an honest amendment rather than
+ * a fabricated zero. What the pane needs in order to act is present.
+ */
+export interface DeviceDto {
+  /** Opaque WPD device id. Windows owns it; the start payload addresses the
+   *  device by `friendlyName` instead, because this id is not stable. */
+  id: string
+  /** §5.4-sanitized label: what `Media/<name>/` will be called. */
+  name: string
+  /** Exactly as the device reports it, e.g. "iPhone" or "Pixel 8 Pro". */
+  friendlyName: string
+}
+
+/** §8.1 `ingest_usb_start` payload. */
+export interface IngestUsbStartDto {
+  deviceFriendly: string
+  /** `copy` keeps the phone's file; `move` deletes it after the §7.3 pass. */
+  mode: UsbModeDto
+  /** Overrides the `Media/<label>/` name; omitted keeps the device's own. */
+  destLabel?: string | null
+  /** §8.1's "só arquivos novos": skip objects already indexed by name+size. */
+  onlyNew?: boolean
+}
+
+/** §8.1's `mode: copy | move`. `move` is the destructive one and is gated on the
+ *  §12.1 order (write → hash → DB insert → *then* delete). */
+export type UsbModeDto = 'copy' | 'move'
+
+/**
+ * `wolfs://progress/ingest` payload (§9.2) — one tagged enum, because the pane
+ * needs all five facts and the channel carries no job id: how the pull is going,
+ * how the scan is going, what it finally did, that the counts moved, and that one
+ * device failed while the pass carried on (§12.1).
+ */
+export type IngestEventDto =
+  | { kind: 'pull'; current: number; total: number; lastName: string }
+  | ({ kind: 'progress' } & ScanProgressDto)
+  | ({ kind: 'summary' } & ScanSummaryDto)
+  | { kind: 'dbChanged' }
+  | { kind: 'failed'; device: string; message: string }
+
 /** §8.1 `geo_lookup` (debug/testing only). */
 export interface GeoDto {
   city: string

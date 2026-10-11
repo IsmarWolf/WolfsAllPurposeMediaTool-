@@ -717,6 +717,99 @@ pub fn find_hashes(pool: &SqlitePool, hashes: &[&str]) -> Result<Vec<Option<Hash
         .collect()
 }
 
+/// §8.1 `only_new`'s predicate: is a file with this **name and byte size** already
+/// indexed anywhere in the library?
+///
+/// This is the check that decides whether a USB object is worth *pulling at all* —
+/// it runs before the expensive transfer, so it can only use what the device
+/// reported over MTP (`name` + `size`), never a hash we have not computed yet.
+/// Name+size is therefore a heuristic, and deliberately a strict one: a
+/// false "already indexed" means a skipped re-import, so it requires **both** the
+/// exact basename and the exact size to match a row.
+///
+/// The tail match is `substr`-based rather than `LIKE '%' || name` on purpose: a
+/// device filename containing `%` or `_` would otherwise be a wildcard and
+/// match unrelated rows.
+pub fn exists_by_name_and_size(pool: &SqlitePool, name: &str, size: u64) -> Result<bool, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    // `relative_path` ends with `/name` (files always live under `Media/<device>/…`)
+    // or equals `name` only in a degenerate root; compare the tail after the last
+    // separator so `a.jpg` does not match `ba.jpg`.
+    let found = conn.query_row(
+        "SELECT 1 FROM media
+          WHERE file_size = ?1
+            AND (
+              relative_path = ?2
+              OR (length(relative_path) > length(?2)
+                  AND substr(relative_path, -length(?2) - 1, 1) = '/'
+                  AND substr(relative_path, -length(?2)) = ?2)
+            )
+          LIMIT 1",
+        rusqlite::params![size as i64, name],
+        |row| row.get::<_, i64>(0),
+    );
+    match found {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(error) => Err(DbError::from(error)),
+    }
+}
+
+/// §12.1's proof for one pulled USB object: does a `media` row exist **for this
+/// device**, with this exact basename and this exact byte size?
+///
+/// This is the question that decides whether the object may be deleted from the
+/// phone, and it is deliberately stricter than [`exists_by_name_and_size`]:
+///
+/// - `scanner::scan` returning `Ok` is **not** the proof. `ScanSummary::skipped`
+///   counts files it could not read, hash or insert and it walks straight past
+///   them, so an `Ok` summary can hide pulled bytes that nothing tracks. Deleting
+///   those from the phone is the one outcome §12.1 forbids.
+/// - Scoped to `device_name`, so a same-named file from another phone (or an
+///   earlier import of the same phone under a different label) can never vouch
+///   for these bytes.
+/// - Name + size, not hash: MTP reports no hash and the scanner does not report
+///   per-file results back, so this is the strongest check available without
+///   re-hashing gigabytes. A same-name-same-size collision inside one device is
+///   vanishingly unlikely and errs towards keeping the phone copy.
+///
+/// `Err` is the caller's problem, not a silent `false` dressed as a verdict: a
+/// lookup that cannot run is not proof of anything.
+pub fn exists_in_device(
+    pool: &SqlitePool,
+    device: &str,
+    name: &str,
+    size: u64,
+) -> Result<bool, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    // Same `substr` tail match as above (exact basename, no `%`/`_` wildcard),
+    // plus `device_name` on an exact `=` because a label is sanitized (§5.4) and
+    // therefore never contains SQL wildcard characters in the first place.
+    let found = conn.query_row(
+        "SELECT 1 FROM media
+          WHERE device_name = ?1
+            AND file_size = ?2
+            AND (
+              relative_path = ?3
+              OR (length(relative_path) > length(?3)
+                  AND substr(relative_path, -length(?3) - 1, 1) = '/'
+                  AND substr(relative_path, -length(?3)) = ?3)
+            )
+          LIMIT 1",
+        rusqlite::params![device, size as i64, name],
+        |row| row.get::<_, i64>(0),
+    );
+    match found {
+        Ok(_) => Ok(true),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(error) => Err(DbError::from(error)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1055,6 +1148,66 @@ mod tests {
                ('g1', 'Sao Paulo', 'SP', 'BR', -23.5, -46.6);",
         )
         .unwrap();
+    }
+
+    /// §8.1 `only_new`. The whole point is that it decides *before* the transfer,
+    /// so it can only compare what MTP reported — and the negative cases here are
+    /// the ones that would silently skip a file the user expects backed up.
+    #[test]
+    fn only_new_matches_on_the_basename_and_the_exact_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        // IMG_1.jpg is indexed at 1000 bytes.
+        assert!(exists_by_name_and_size(&pool, "IMG_1.jpg", 1000).unwrap());
+        // Same name, different size: a genuinely different file, must be pulled.
+        assert!(!exists_by_name_and_size(&pool, "IMG_1.jpg", 1001).unwrap());
+        // Same size, different name.
+        assert!(!exists_by_name_and_size(&pool, "NOPE.jpg", 1000).unwrap());
+        // Never indexed.
+        assert!(!exists_by_name_and_size(&pool, "NEW.jpg", 1234).unwrap());
+    }
+
+    /// The tail match must be on a **basename**, not a substring: `1.jpg` is
+    /// indexed, and a `LIKE '%1.jpg'` predicate would wrongly treat `IMG_1.jpg`
+    /// (also indexed, but a different file) as the same name — and, worse, would
+    /// match a device name containing `_` as a wildcard.
+    #[test]
+    fn only_new_does_not_confuse_a_substring_or_a_wildcard_for_a_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        // `IMG_1.jpg` is at 1000 bytes; `1.jpg` alone was never indexed.
+        assert!(!exists_by_name_and_size(&pool, "1.jpg", 1000).unwrap());
+        // A literal `_` must not act as a single-char wildcard: there is no
+        // `IMGX1.jpg`, so nothing matches.
+        assert!(!exists_by_name_and_size(&pool, "IMGX1.jpg", 1000).unwrap());
+        // A literal `%` likewise.
+        assert!(!exists_by_name_and_size(&pool, "%", 1000).unwrap());
+    }
+
+    /// §12.1's delete proof. `only_new`'s looser predicate is not enough: the
+    /// question here is whether *these bytes from this phone* are tracked, so the
+    /// negatives are the ones that would delete a file nobody owns a copy of.
+    #[test]
+    fn the_delete_proof_is_scoped_to_the_device_that_pulled_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        // IMG_1.jpg is indexed for device 'PC' at 1000 bytes.
+        assert!(exists_in_device(&pool, "PC", "IMG_1.jpg", 1000).unwrap());
+        // A different phone's row with the same name and size must not vouch for
+        // these bytes, even though `only_new` would have matched it.
+        assert!(!exists_in_device(&pool, "iPhone", "IMG_1.jpg", 1000).unwrap());
+        // Wrong size, wrong name, never indexed: same three negatives as above.
+        assert!(!exists_in_device(&pool, "PC", "IMG_1.jpg", 1001).unwrap());
+        assert!(!exists_in_device(&pool, "PC", "NOPE.jpg", 1000).unwrap());
+        assert!(!exists_in_device(&pool, "PC", "NEW.jpg", 1234).unwrap());
+        // The basename rule still holds here: `1.jpg` is not `IMG_1.jpg`.
+        assert!(!exists_in_device(&pool, "PC", "1.jpg", 1000).unwrap());
     }
 
     #[test]

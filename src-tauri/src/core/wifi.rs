@@ -33,14 +33,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use chrono::Datelike;
 use tiny_http::{Header, Response, Server, StatusCode};
 
 use crate::core::db::SqlitePool;
-use crate::core::exif::{self, RawMetadata};
 use crate::core::geocode::Geocoder;
 use crate::core::models::{IngestEventDto, ScanSummary, WifiInfoDto};
-use crate::core::paths::{self, NO_META_DIR, PathResolver};
+use crate::core::paths::{self, PathResolver};
+use crate::core::placement::{self, Placement};
 use crate::core::scanner::{self, ScanSource};
 use crate::error::AppError;
 use crate::state::{Job, JobKind, JobRegistry};
@@ -694,9 +693,7 @@ fn payload_json(staged: &Staged) -> String {
 }
 
 fn sanitize_device(raw: &str) -> String {
-    paths::sanitize_device_label(raw)
-        .or_else(|_| Ok::<String, AppError>(paths::sanitize_label(raw)))
-        .unwrap_or_default()
+    placement::sanitize_device_label(raw).unwrap_or_default()
 }
 
 fn parse_boundary(content_type: &str) -> Option<String> {
@@ -717,94 +714,30 @@ fn parse_boundary(content_type: &str) -> Option<String> {
 
 /// The moment of truth: the staged bytes become a library file.
 ///
-/// Order matters and follows §7.8: reject an unsupported type **before** any
-/// metadata read, sanitize both the label and the name (§5.4), then choose the
-/// folder by C7 and rename. A failure here deletes the staging file — the phone
-/// still has the original, so nothing is lost (§14).
+/// A thin wrapper over `core::placement::Placement` (c13): the rules are shared
+/// with the USB transport, and all this adds is the session counters. Order
+/// follows §7.8 — reject an unsupported type before any metadata read, sanitize
+/// the label and the name (§5.4), choose the folder by C7, rename. A failure
+/// here deletes the staging file; the phone still has the original, so nothing is
+/// lost (§14).
 fn place(
     shared: &Shared,
     device_raw: &str,
     raw_name: &str,
     staged: &Path,
 ) -> Result<String, String> {
-    let label = paths::sanitize_device_label(device_raw).map_err(|error| error.to_string())?;
-    let name = safe_file_name(raw_name).map_err(|error| error.to_string())?;
-
-    let extension = extension_of(&name);
-    if !exif::IMAGE_EXTS.contains(&extension.as_str())
-        && !exif::VIDEO_EXTS.contains(&extension.as_str())
-    {
-        return Err(format!("tipo não suportado: {name}"));
+    let placement = Placement::new(&shared.resolver, shared.ffmpeg.as_deref());
+    match placement.place(device_raw, raw_name, staged) {
+        Ok(placed) => {
+            shared.counters.uploads.fetch_add(1, Ordering::Relaxed);
+            shared
+                .counters
+                .bytes
+                .fetch_add(placed.bytes, Ordering::Relaxed);
+            Ok(placed.relative)
+        }
+        Err(error) => Err(error.to_string()),
     }
-
-    let metadata = exif::extract(staged, shared.ffmpeg.as_deref()).ok();
-    let directory = target_dir(&shared.resolver, &label, metadata.as_ref())
-        .map_err(|error| error.to_string())?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-
-    let target =
-        scanner::free_destination(&directory.join(&name)).map_err(|error| error.to_string())?;
-    fs::rename(staged, &target).map_err(|error| error.to_string())?;
-
-    let relative = shared
-        .resolver
-        .abs_to_rel(&target)
-        .map_err(|error| error.to_string())?;
-
-    shared.counters.uploads.fetch_add(1, Ordering::Relaxed);
-    shared.counters.bytes.fetch_add(
-        fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0),
-        Ordering::Relaxed,
-    );
-    Ok(relative)
-}
-
-/// §7.8: `<YYYY>/<MM>/` for a file with metadata of its own, `Sem_Metadados/`
-/// otherwise — C7's single definition, the same one the scanner uses. A file
-/// placed in the wrong folder self-heals: §7.3's organize step renames it on the
-/// next pass.
-fn target_dir(
-    resolver: &PathResolver,
-    label: &str,
-    metadata: Option<&RawMetadata>,
-) -> Result<PathBuf, AppError> {
-    let device = resolver.media_device(label)?;
-    let dated = metadata
-        .filter(|meta| meta.has_metadata())
-        .and_then(|meta| {
-            meta.captured_at
-                .map(|captured| (captured.year(), captured.month()))
-        });
-    match dated {
-        Some((year, month)) => Ok(device.join(year.to_string()).join(format!("{month:02}"))),
-        None => Ok(device.join(NO_META_DIR)),
-    }
-}
-
-/// A browser's `filename` is attacker-controlled and historically arrived as
-/// `C:\fakepath\IMG_0001.jpg`. Only the last component is ever used, and §5.4's
-/// Windows rules still have the last word.
-fn safe_file_name(raw: &str) -> Result<String, AppError> {
-    let base = raw
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(raw)
-        .trim()
-        .trim_start_matches("\u{feff}")
-        .trim();
-    if base.is_empty() || base == "." || base == ".." {
-        return Err(AppError::Conflict("nome de arquivo vazio".into()));
-    }
-    paths::ensure_safe_component(base)?;
-    Ok(base.to_string())
-}
-
-fn extension_of(name: &str) -> String {
-    Path::new(name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
 }
 
 fn staging_dir(resolver: &PathResolver) -> Result<PathBuf, AppError> {

@@ -100,6 +100,14 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
+  /* The bottom transfer strip is one row plus its track, and that is fixed on
+     purpose: the shell's two floating overlays (`.zone5`, `.md-toasts`) are
+     `position: fixed` and can only be lifted by a height they can read, so the
+     strip's height has to be a number the stylesheet already knows rather than
+     whatever the longest filename in pt-BR happens to wrap to. Rows inside it
+     ellipsize instead. 8 + 44 (the §19.1 hit target on Cancelar) + 6 + 6 + 8. */
+  --transfer-h: 72px;
+
   --z-canvas: 0;
   --z-sticky: 10;
   --z-float: 20;

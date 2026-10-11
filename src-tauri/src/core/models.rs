@@ -260,12 +260,69 @@ pub struct WifiInfoDto {
     pub uploads: i64,
 }
 
+/// §8.1 `devices_list` — one attached MTP/PTP device, as §12.1's
+/// `[C-3e Connect iPhone] -> WPD enumerate -> DeviceDto -> UI` flow needs.
+///
+/// Deliberately small. `winmtp` wraps enumeration and content but **not** the
+/// device-level capability properties, so `capacity`/`free`/`protocol` are not
+/// claimed here: §8.1 listed them, and guessing them from a Windows handle would
+/// be worse than omitting them. They stay a §8.1 amendment rather than a
+/// fabricated zero. What the pane needs to act is here.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceDto {
+    /// The opaque WPD device id. Addressed by `device_friendly` in the start
+    /// payload, never by this — it is a GUID-shaped string Windows owns.
+    pub id: String,
+    /// §5.4-sanitized label: what `Media/<name>/` will be called.
+    pub name: String,
+    /// Exactly as the device reports it, e.g. "iPhone" or "Pixel 8 Pro".
+    pub friendly_name: String,
+}
+
+/// §8.1's `mode: copy|move`. `Move` is the destructive one and is gated on the
+/// §12.1 order (write → hash → DB insert → *then* delete).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UsbModeDto {
+    Copy,
+    Move,
+}
+
+/// §8.1 `ingest_usb_start` payload.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestUsbStartDto {
+    /// Which attached device to read, matched against `DeviceDto::friendly_name`.
+    pub device_friendly: String,
+    pub mode: UsbModeDto,
+    /// Overrides the `Media/<label>/` name; `None` keeps the device's own.
+    pub dest_label: Option<String>,
+    /// §8.1's "only what is new": skip objects already indexed by name+size
+    /// instead of pulling them just to hash them again.
+    #[serde(default)]
+    pub only_new: bool,
+}
+
 /// `wolfs://progress/ingest` (§9.2). One tagged enum because the pane needs all
 /// three facts and the channel carries no job id: how the scan is going, what it
 /// finally did (the dedupe count is in here), and that the counts moved.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+// `rename_all` above renames the *variants*; `rename_all_fields` is what turns
+// `Pull`'s `last_name` into the `lastName` the frontend types declare. Without
+// it serde would emit `last_name` and the TS interface would silently be a lie.
+#[serde(rename_all_fields = "camelCase")]
 pub enum IngestEventDto {
+    /// The pull phase (§12.1): bytes coming **off the device**, before the §7.3
+    /// pass starts. Distinct from `Progress`, which counts *indexed* files — a
+    /// 4 GB video spends minutes being pulled and is one row when scanned, so
+    /// conflating them would show a bar that appears frozen.
+    Pull {
+        current: u32,
+        total: u32,
+        last_name: String,
+    },
     Progress(ScanProgressDto),
     Summary(ScanSummary),
     DbChanged,

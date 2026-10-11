@@ -10,8 +10,10 @@ use std::sync::{Arc, Mutex};
 use super::*;
 
 use crate::core::db;
+use crate::core::exif::RawMetadata;
 use crate::core::layout;
 use crate::core::paths::RootSource;
+use crate::core::placement::{safe_file_name, target_dir};
 use crate::core::scanner::ScanSource;
 
 // ---------------------------------------------------------------------------

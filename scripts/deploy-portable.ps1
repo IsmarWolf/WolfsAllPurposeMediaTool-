@@ -19,7 +19,9 @@
     * That build also needs `--features custom-protocol`. Without it Tauri stays
       in dev mode and the shipped binary tries to reach the Vite dev server,
       so a double-clicked copy shows ERR_CONNECTION_REFUSED. `tauri build`
-      passes the feature on its own; calling cargo directly does not.
+      passes the feature on its own; calling cargo directly does not. The same
+      argument names `usb-ingest`, which is a default feature anyway — stated
+      here so a shipped build can never silently lose the USB transport.
     * The seven directories below are the §5.5 order, and a test
       (`layout::tests::deploy_script_tree_matches_layout`) parses this very
       array and fails if it ever drifts from `layout::ensure`. Do not reorder or
@@ -164,7 +166,12 @@ function Invoke-Build {
     # running. `tauri build` passes it implicitly; calling cargo directly means
     # we have to.
     Invoke-External -File 'npm.cmd' -Arguments @('run', 'build') -What 'frontend build'
-    Invoke-External -File 'cargo' -Arguments @('build', '--release', '--features', 'custom-protocol', '--manifest-path', $Script:Manifest) -What 'cargo build'
+    # `usb-ingest` is a *default* feature (c12 decision, 2026-10-04), so the
+    # portable build would get the WPD/MTP transport either way. It is named
+    # explicitly because the alternative is silent: if the feature ever leaves
+    # `default` again, this build ships an app that cannot see a phone, and the
+    # only symptom is "no device connected" on a phone that is plugged in.
+    Invoke-External -File 'cargo' -Arguments @('build', '--release', '--features', 'custom-protocol,usb-ingest', '--manifest-path', $Script:Manifest) -What 'cargo build'
 }
 
 function Get-BuiltExe {

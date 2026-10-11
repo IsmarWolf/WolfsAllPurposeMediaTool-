@@ -4,6 +4,7 @@ import { Header } from '../components/layout/Header'
 import { Inspector } from '../components/layout/Inspector'
 import { Sidebar } from '../components/layout/Sidebar'
 import { ToastSock } from '../components/layout/ToastSock'
+import { TransferBar } from '../components/layout/TransferBar'
 import { useDashStats } from '../hooks/useTauriEvent'
 import { useInspector, useSelection } from '../hooks/useSelection'
 import { useShortcuts, type Shortcut } from '../hooks/useShortcuts'
@@ -15,6 +16,7 @@ import { MediaScreen } from '../features/media'
 import { SettingsScreen } from '../features/settings'
 import { VaultScreen } from '../features/vault'
 import { DEFAULT_ROUTE, hasSelectionModel, type Route } from '../routes'
+import { TransferProvider } from './TransferProvider'
 
 /**
  * §10.6.3 the 4 zones + the floating Zone 5 bar.
@@ -22,8 +24,23 @@ import { DEFAULT_ROUTE, hasSelectionModel, type Route } from '../routes'
  * Zone-role purity (C16) is enforced here, not by convention: Zone 2 receives
  * only the Mídia count and the vault lock dot, Zone 1 receives only the DB dot,
  * and the canvas never learns about the sidebar.
+ *
+ * `TransferProvider` wraps the shell rather than living inside a route because
+ * §9.2's progress channels have no job id: exactly one subscriber has to exist
+ * for the session, or a pass that is still copying reports to nobody the moment
+ * the human leaves the Backup page. `TransferBar` is therefore a sibling of the
+ * body, below it — a bottom strip, not a fifth zone: it carries no navigation
+ * and no selection.
  */
 export function AppShell() {
+  return (
+    <TransferProvider>
+      <ShellBody />
+    </TransferProvider>
+  )
+}
+
+function ShellBody() {
   const [route, setRoute] = useState<Route>(DEFAULT_ROUTE)
   const selection = useSelection()
   const { data: stats, loading: statsLoading, error: statsError, rerun } = useDashStats()
@@ -110,6 +127,10 @@ export function AppShell() {
         />
       </div>
 
+      {/* Order matters and it is not cosmetic: `.transfer ~ .zone5` in
+          shell.css lifts the floating bulk bar clear of the strip, and a
+          sibling combinator only reaches *later* siblings. */}
+      <TransferBar />
       <BulkToolbar count={selection.count} onClear={selection.clear} />
       <ToastSock />
     </div>

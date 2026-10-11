@@ -8,7 +8,10 @@
 
 .shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* Zone 1 | zones 2-4 | the transfer strip. The third row is `auto`, so it is
+     exactly 0 px while nothing is importing — `TransferBar` returns null — and
+     the body takes the difference without any reserved space. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   /* The shell owns the viewport, not the page: each zone scrolls on its own,
      so the sidebar and the inspector stay put when the canvas is long. A
      `min-height: 100vh` here let the whole page scroll instead, which walked
@@ -342,6 +345,143 @@
   font-weight: 500;
 }
 
+/* -------------------------------------------------- transfer strip (§11.3) */
+
+.transfer {
+  /* Locked, and `overflow: hidden` on purpose — see `--transfer-h`. A strip that
+     grew with its content would push the fixed overlays down into it, because a
+     `position: fixed` sibling cannot see a height it does not share. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  height: var(--transfer-h);
+  overflow: hidden;
+  padding: var(--space-sm) var(--space-card);
+  /* Separation is tonal (MD3), never a border: the strip is one step above the
+     body's container colour, so it reads as a surface and not as a divider. */
+  background-color: var(--md-surface-ctr-high);
+  box-shadow: var(--shadow-rest);
+}
+
+.transfer__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  /* The row is sized by the Cancelar button's 44 px hit target, which is what
+     makes `--transfer-h` add up. */
+  min-height: 0;
+}
+
+.transfer__source {
+  flex: none;
+  padding: 0 var(--space-md);
+  font-size: var(--text-label-s);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  color: var(--md-on-secondary-ctr);
+  background-color: var(--md-secondary-ctr);
+  border-radius: var(--radius-pill);
+}
+
+/* Everything that can be long ellipsizes rather than wrapping: the strip's
+   height is fixed, and a wrapped second line would be clipped mid-glyph. */
+.transfer__label,
+.transfer__file {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.transfer__label {
+  flex: 0 1 auto;
+  max-width: 24ch;
+  font-size: var(--text-label-m);
+  font-weight: 500;
+}
+
+.transfer__phase {
+  flex: none;
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.transfer__file {
+  flex: 1 1 auto;
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+}
+
+.transfer__spacer {
+  flex: none;
+  width: var(--space-xs);
+}
+
+.transfer__count {
+  flex: none;
+  /* Tabular figures so the counter does not shuffle sideways on every event. */
+  font-size: var(--text-label-m);
+  font-variant-numeric: tabular-nums;
+}
+
+.transfer__cancel {
+  flex: none;
+  /* The strip's padding already gives the row its 44 px, and the pill needs no
+     extra inset here. */
+  padding: 0 var(--space-md);
+}
+
+.transfer__track {
+  flex: none;
+  height: 6px;
+  overflow: hidden;
+  background-color: var(--md-surface-ctr);
+  border-radius: var(--radius-pill);
+}
+
+.transfer__fill {
+  height: 100%;
+  background-color: var(--md-primary);
+  border-radius: var(--radius-pill);
+  transition: width var(--dur-micro) var(--ease-emphasized);
+}
+
+/* MD3's linear *indeterminate* indicator: a segment that travels, because there
+   is no honest fraction to draw during the listing phase. */
+@keyframes transfer-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+.transfer__fill--indeterminate {
+  width: 30%;
+  animation: transfer-indeterminate 1.6s var(--ease-emphasized) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transfer__fill--indeterminate {
+    /* Motion off does not mean "no progress": the segment stays, it just stops
+       travelling, which still reads as busy rather than as finished. */
+    animation: none;
+    transform: none;
+  }
+}
+
+/* Zone 5 and the toasts are `position: fixed`, so they cannot be pushed by the
+   grid — they are lifted instead. `.transfer ~ .zone5` only matches while the
+   strip exists, which is why `TransferBar` is rendered before `BulkToolbar`. */
+.transfer ~ .zone5 {
+  bottom: calc(var(--transfer-h) + var(--space-xs));
+}
+
+.transfer ~ .md-toasts {
+  bottom: calc(var(--transfer-h) + var(--space-card));
+}
+
 /* ---------------------------------------------------------------- toasts */
 
 .md-toasts {
@@ -466,6 +606,25 @@
   flex-wrap: wrap;
   gap: var(--space-xs);
   margin-top: var(--space-xs);
+}
+
+/* The supporting line under a control on the Backup screen (destination,
+   result line, progress caption). Three panes already render this class and it
+   had no rule at all, so they were all inheriting the browser's `<p>` margins
+   and full-strength text colour; the hint is now actually a hint. */
+.md-card__hint {
+  margin: 0;
+  font-size: var(--text-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+/* Same line, but it reports a refusal. The MD3 role here is the error container
+   (§19.1), which is why it is a tinted container and not red body text. */
+.md-card__hint--error {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--md-on-error-ctr);
+  background-color: var(--md-error-ctr);
+  border-radius: var(--radius-sm);
 }
 
 .md-stat__value {
@@ -793,6 +952,178 @@
 
 .md-card__hint--path {
   overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------ Wi-Fi (c13, §11.3) */
+
+.backup-wifi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-self: flex-start;
+  width: 100%;
+  max-width: 720px;
+}
+
+.backup-wifi h2 {
+  margin: 0;
+}
+
+/* The QR and the instructions sit side by side until the pane gets narrow, then
+   stack — the code is the primary action, so it never shrinks below legibility. */
+.wifi-serve {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-card);
+  align-items: flex-start;
+}
+
+.wifi-serve__code {
+  flex: none;
+}
+
+.wifi-serve__guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.wifi-serve__steps {
+  margin: 0;
+  padding-left: 1.25em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--text-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+.wifi-serve__address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wifi-serve__url {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background-color: var(--md-surface-ctr-low);
+  color: var(--md-on-surface);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Square and sharp on purpose: a rounded or clipped code stops scanning (see
+   QrCode.tsx). The frame is an outline token, not a separator. */
+.wifi-qr {
+  display: block;
+  width: 208px;
+  height: 208px;
+  border-radius: var(--radius-xs);
+  background-color: #ffffff;
+  outline: 1px solid var(--md-outline-ctr);
+}
+
+/* ------------------------------------------------------------- USB (c12, §11.3) */
+
+.backup-usb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-self: flex-start;
+  width: 100%;
+  max-width: 720px;
+}
+
+.backup-usb h2 {
+  margin: 0;
+}
+
+/* The backend's own words about a read failure. Monospaced and dimmed because it
+   is diagnostic text (often an HRESULT), not part of the sentence above it. */
+.usb-error__detail {
+  display: block;
+  margin-top: var(--space-xs);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: var(--text-label-m);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+/* Title row with the "look again" control on the trailing edge. `baseline`
+   alignment rather than `center`: the button is a text variant whose cap height
+   has to sit on the title's, not float half a line below it. */
+.usb-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs) var(--space-sm);
+}
+
+/* One card per phone, not a list row: the destination is part of picking a
+   device (§5.4 sanitizes it again on the Rust side), and the active card is a
+   filled container, not a border - see §19.1's anti-pattern list. */
+.usb-devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.usb-device {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-sm);
+  padding: var(--space-card);
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.usb-device--active {
+  background-color: var(--md-secondary-ctr);
+}
+
+.usb-device__name {
+  flex: 1 1 auto;
+  font-size: var(--text-body-l);
+  font-weight: 500;
+  color: var(--md-on-secondary-ctr);
+}
+
+.usb-device__label {
+  flex: 0 1 auto;
+  font-size: var(--text-label-m);
+  color: var(--md-on-secondary-ctr);
+  opacity: 0.8;
+}
+
+.usb-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.usb-phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* The in-flight file name is the one thing that answers "is it stuck?", so it
+   truncates from the left: the tail of a camera filename carries the index. */
+.usb-phase__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }
 
 /* ==========================================================================

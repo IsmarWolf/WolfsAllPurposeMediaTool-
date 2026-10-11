@@ -1,10 +1,10 @@
 pub mod db;
 pub mod exif;
 pub mod geocode;
-pub mod ingest;
 pub mod layout;
 pub mod models;
 pub mod paths;
+pub mod placement;
 pub mod scanner;
 pub mod thumbs;
 pub mod usb;

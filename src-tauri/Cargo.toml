@@ -40,13 +40,24 @@ tauri-build = { version = "2.7.0", features = [] }
 # localhost:1420 - so the deploy script (PLAN 16.1) must pass it. The comment is
 # Tauri's own wording and its warning is the reason it is here at all.
 [features]
+# c12 decision (human 2026-10-04): USB is a *source*, not an extra. Off by
+# default meant `npm run tauri dev` and §16.1's deploy both produced an app that
+# can never see a phone, and — the reason that actually mattered — a plain
+# `cargo test` / `cargo clippy` compiled none of `core/usb/wpd.rs`, which is
+# precisely how `ea44337` shipped a WPD source that did not satisfy `Clone` (see
+# §13.1's damage audit). `--no-default-features` still builds the
+# `NullDeviceSource` app, and its `ingest_usb_start` still refuses with
+# `E_UNAVAILABLE` rather than reporting a fake success.
+default = ["usb-ingest"]
 custom-protocol = ["tauri/custom-protocol"]
 # §7.5: the offline cities-index producer and the format writer. Never on for
 # the app; see the `[[bin]] gen-geonames` note above.
 tooling = []
-# c12: USB ingestion via Windows Portable Device (WPD) API, gated behind
-# the `usb-ingest` feature so normal builds don't pull in the Windows COM crate.
-usb-ingest = ["windows"]
+# PLAN §7.7: the WPD/MTP transport for USB ingest, behind a trait so the
+# transport can be swapped and the copy/move policy can be tested without
+# hardware. ON by default (see above); see `src/core/usb.rs` for the seam and
+# `src/core/usb/wpd.rs` for the only module allowed to name `winmtp`.
+usb-ingest = ["dep:winmtp", "dep:widestring", "dep:windows"]
 
 [dependencies]
 serde_json = "1.0"
@@ -62,20 +73,71 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 kamadak-exif = "0.6.1"
-anyhow = "1.0"
+# PLAN §7.6 (c9): decode/resize for the Rust thumbnail path. HEIC/AVIF and every
+# video go to ffmpeg instead, so the codecs are exactly the formats §7.4.1 lists
+# for the image crate — no avif/heif features, no C build here.
 image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "png",
   "tiff",
   "webp",
 ] }
+# §7.6 encodes WebP at q=80, and `image`'s own encoder is lossless-only (its
+# docs point at libwebp for lossy). libwebp-sys compiles its C with `cc`, the
+# same mechanism rusqlite's bundled SQLite already uses on this box.
 webp = "0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
+# PLAN §7.3 step 1 (recursive Media/<device> walk) and step 1's sha256 dedupe,
+# plus the §22 media id. All three were already in the tree transitively through
+# Tauri, so this is a promotion to direct deps, not a new dependency.
 walkdir = "2.5.0"
 sha2 = "0.10.9"
 uuid = { version = "1.26.1", features = ["v4"] }
 tiny_http = "0.12.0"
 qrcodegen = "1.8.0"
 if-addrs = "0.15.0"
-windows = { version = "0.36", optional = true, features = ["Win32_Foundation", "Win32_System_Com"] }
-tempfile = "3.10"
+# PLAN §7.7: `winmtp` is a **safe** Rust wrapper over the Windows MTP/WPD COM
+# API (device enumeration, content walk, and COM streams adapted to
+# `std::io::Read`/`Write`). It is the sanctioned exception to "nothing links a
+# Windows-API crate in a normal build" that c3 set for the hidden-attribute work
+# (see §5.9), and it replaces a hand-rolled `windows`-crate binding: the
+# alternatives were ~700 lines of `unsafe` COM that could not be compiled or
+# reviewed without a phone attached. It re-exports the `windows` types it needs,
+# so no direct `windows` dependency is required.
+winmtp = { version = "0.3.2", optional = true }
+# `U16CString` is what `Content::object_by_id` takes, and `winmtp` does not
+# re-export it, so the name must be in scope for `core::usb::wpd` to resolve an
+# MTP object id. Same major as the one `winmtp` itself resolves.
+widestring = { version = "1", optional = true }
+# c12 amendment (human 2026-10-04, hardware smoke): the comment above was right
+# about *most* of the crate and wrong about `Object`. `winmtp` materializes every
+# object with `get_string(&WPD_OBJECT_NAME)?`
+# (`winmtp-0.3.2/src/device/content.rs:56`), and iOS 18's date folders do not
+# expose that property — they only carry `WPD_OBJECT_ORIGINAL_FILE_NAME`. The
+# read fails, `ObjectIterator`'s `.ok()` hides it as "end of listing", and an
+# iPhone full of photos reports **zero files and no error**. The same happens to
+# `Object::object_by_path`, so the `MEDIA_ROOTS` fast path could not resolve a
+# single folder either.
+#
+# So enumeration and object construction are done in `core/usb/wpd.rs` instead,
+# and that needs three `windows` names: the raw `IEnumPortableDeviceObjectIDs`
+# (which returns ids only — nothing that can silently swallow an error) and the
+# three `WPD_OBJECT_*` property keys. `winmtp` stays for what it does correctly
+# and is much cheaper to keep: the COM apartment, `Provider`, the transfer and
+# delete calls. `Object::new` and `ObjectType::from_guid` are public in 0.3.2,
+# which is what makes this a hundred lines instead of a fork, and both transfer
+# and delete address the object by id alone — so a locally built `Object` reads
+# and deletes exactly like one the crate built.
+#
+# Same major as `winmtp` resolves, on purpose: two majors mean two incompatible
+# `PROPERTYKEY`/`IPortableDeviceContent` types and the calls would not line up.
+# Only the feature actually named here is enabled.
+windows = { version = "0.52", optional = true, default-features = false, features = [
+    "Win32_Devices_PortableDevices",
+    # For `FormatMessageW`, called by hand in `hresult_text` — see the comment
+    # there. Not optional: without it a single WPD error aborts the app.
+    "Win32_System_Diagnostics_Debug",
+] }
+
+[dev-dependencies]
+tempfile = "3.20"

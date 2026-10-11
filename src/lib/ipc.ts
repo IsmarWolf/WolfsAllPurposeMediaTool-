@@ -8,8 +8,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { toAppError } from './errors'
 import type {
   AppVersionsDto,
+  DeviceDto,
   FilterSpec,
   GeoDto,
+  IngestUsbStartDto,
   MediaDto,
   MediaQueryDto,
   RecalcRootDto,
@@ -17,6 +19,7 @@ import type {
   ScanSummaryDto,
   StatsDto,
   VaultStatusDto,
+  WifiInfoDto,
 } from '../types/api'
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -60,6 +63,48 @@ export const scanStart = (device: string, folder?: string) =>
 
 /** §8.1 `scan_cancel` — §9.3. Idempotent; a running scan ends with `cancelled`. */
 export const scanCancel = () => call<void>('scan_cancel')
+
+/**
+ * §8.1 `ingest_wifi_start` — §11.3's Wi-Fi pane. Idempotent by design: a second
+ * call returns the *running* server's facts (with its live upload count) instead
+ * of `E_CONFLICT`, because the pane polls this to show "aguardando uploads… n
+ * enviados" and a poll must never look like an error. The server outlives the
+ * pane, so the promise resolves as soon as the listener is up.
+ */
+export const ingestWifiStart = () => call<WifiInfoDto>('ingest_wifi_start')
+
+/**
+ * §8.1 `ingest_wifi_stop` — §12.2's `[C-3k Stop]`. The accept loop closes,
+ * in-flight uploads finish, and the pipeline job keeps running. Idempotent.
+ */
+export const ingestWifiStop = () => call<void>('ingest_wifi_stop')
+
+/**
+ * §8.1 `devices_list` (c12) — attached MTP/PTP devices for §12.1's
+ * `[C-3e Conectar iPhone]` flow. Resolves an empty list when nothing is plugged
+ * in *and* on a build without the MTP transport: the two are indistinguishable to
+ * the pane, and `ingestUsbStart` is where the difference surfaces as an error.
+ */
+export const devicesList = () => call<DeviceDto[]>('devices_list')
+
+/**
+ * §8.1 `ingest_usb_start` (c12) — claims the §9.3 job slot and returns its
+ * `JobId` immediately.
+ *
+ * The promise resolving is *not* the import finishing: a 4 GB video takes minutes,
+ * so the counts arrive on `wolfs://progress/ingest` as `pull` → `progress` →
+ * `summary` (`useUsbIngest`). `mode: 'move'` deletes from the phone only after the
+ * §7.3 pass has hashed and indexed the files — see `core/usb.rs`.
+ */
+export const ingestUsbStart = (payload: IngestUsbStartDto) =>
+  call<string>('ingest_usb_start', { payload })
+
+/**
+ * §8.1 `ingest_usb_stop` (c12) — §12.1's `[C-3k Parar]`. Flips the shared
+ * `CancelFlag`: the pull stops before the next object and the delete phase is
+ * never reached. Idempotent.
+ */
+export const ingestUsbStop = () => call<void>('ingest_usb_stop')
 
 /** §8.1 `geo_lookup` — debug/testing only (§7.5.1 decision 8). */
 export const geoLookup = (lat: number, lon: number) =>

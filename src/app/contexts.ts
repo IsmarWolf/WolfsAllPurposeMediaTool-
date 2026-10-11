@@ -43,3 +43,68 @@ export type ToastContextValue = {
 export const I18nContext = createContext<I18nContextValue | null>(null)
 export const SkinContext = createContext<SkinContextValue | null>(null)
 export const ToastContext = createContext<ToastContextValue | null>(null)
+
+/* ------------------------------------------------------- transfer (§11.3) */
+
+/** Which source the bar is reporting. The tabs are the transport, not screens. */
+export type TransferKind = 'usb' | 'wifi' | 'local'
+
+/**
+ * The two phases a pass actually has, plus the listing that precedes them.
+ *
+ * `listing` is its own phase because it is the one with no number: on a phone
+ * whose albums `MEDIA_ROOTS` does not recognise it is two verified walks over
+ * every object before the first byte moves — measured at ~258 s for 3 288 files
+ * on real hardware. A bar that only knew `copy`/`index` would sit at zero with
+ * no explanation for four minutes, which reads as a hang.
+ */
+export type TransferPhase = 'listing' | 'copy' | 'index'
+
+/**
+ * One running job, normalised. `total: 0` is §9.2's own "the walk cannot know
+ * its size yet" marker, so the bar is indeterminate rather than at 0 %.
+ *
+ * `cancel` is null when the job has no cancel: the Wi-Fi server can be stopped
+ * (which is what stops it accepting uploads), but there is no per-file abort on
+ * the upload path, and offering one would be a control that does nothing.
+ */
+export type TransferJob = {
+  kind: TransferKind
+  /** The device's friendly name, or the picked folder's name. */
+  label: string
+  phase: TransferPhase
+  current: number
+  total: number
+  /** The file being pulled right now — empty while listing or indexing. */
+  lastName: string
+  cancel: (() => void) | null
+}
+
+/**
+ * The ingest hooks, owned above the router.
+ *
+ * They used to be mounted by the Backup screen, which read as "a running pass
+ * keeps reporting while you navigate away" — but the screen *unmounts* on
+ * navigation, so the subscription died with it and the pass went silent. Lifting
+ * them here is what makes that promise true, and it is also what lets the shell
+ * render one bar for every screen instead of one per tab.
+ */
+export type TransferContextValue = {
+  usb: ReturnType<typeof import('../hooks/useUsbIngest').useUsbIngest>
+  wifi: ReturnType<typeof import('../hooks/useWifiIngest').useWifiIngest>
+  scan: ReturnType<typeof import('../hooks/useScan').useScan>
+  /** The Disco-local source §11.3 picked. Lifted for the same reason. */
+  folder: { path: string; name: string } | null
+  setFolder: (folder: { path: string; name: string } | null) => void
+  /**
+   * Whether the Backup page is on screen, which is what turns the USB device
+   * poll on. It is not derivable here — the router is below this component — so
+   * the page reports it on mount and again on unmount.
+   */
+  backupOpen: boolean
+  setBackupOpen: (open: boolean) => void
+  /** The job the bar should paint, or null when nothing is running. */
+  job: TransferJob | null
+}
+
+export const TransferContext = createContext<TransferContextValue | null>(null)
