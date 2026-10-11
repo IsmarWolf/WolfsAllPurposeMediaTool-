@@ -119,5 +119,9 @@ export const mediaDetail = (id: string) => call<MediaDto | null>('media_detail',
 /** §8.1 `media_reveal` — Explorer on the media's folder. */
 export const mediaReveal = (id: string) => call<void>('media_reveal', { id })
 
+/** §8.1 `media_scope_video` — grant the asset protocol this one video file so
+ *  the lightbox can play it (§6.7/c10 amendment, 2026-10-05). */
+export const mediaScopeVideo = (id: string) => call<void>('media_scope_video', { id })
+
 /** §8.1 `media_remove` — delete media rows by id. */
 export const mediaRemove = (ids: string[]) => call<number>('media_remove', { ids })

@@ -37,6 +37,23 @@ pub fn run() {
             let state = app.state::<AppState>();
             let snapshot = state.snapshot();
             core::thumbs::scope_thumbnails(app.handle(), &snapshot.resolver, None);
+            // §7.6 producer (c13 fix, 2026-10-05): a library imported before the
+            // ingest mop-up existed — or left half-rendered by a crash — has rows
+            // with no tile and nothing to trigger them, so the gallery shows grey
+            // until the next scan. The boot mop-up is `force = false`, so an
+            // existing pair is skipped (two stats per row) and it self-heals the
+            // tree; every ffmpeg-deferred row also retries here for free once the
+            // binary is dropped into `App/bin/`. The pool is absent on a degraded
+            // boot, and then there is nothing to render anyway.
+            if let Ok(pool) = snapshot.require_pool() {
+                commands::media::mop_up_thumbs(
+                    app.handle().clone(),
+                    state.jobs(),
+                    snapshot.resolver.clone(),
+                    pool,
+                    snapshot.ffmpeg_ok.then(|| snapshot.resolver.ffmpeg_exe()),
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,6 +66,7 @@ pub fn run() {
             commands::media::media_detail,
             commands::media::media_reveal,
             commands::media::media_remove,
+            commands::media::media_scope_video,
             commands::media::thumbs_rebuild_all,
             commands::wifi::ingest_wifi_start,
             commands::wifi::ingest_wifi_stop,

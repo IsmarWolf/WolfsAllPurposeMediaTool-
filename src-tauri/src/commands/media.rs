@@ -124,7 +124,7 @@ pub async fn scan_start(
 /// The `JobKind::Thumbs` claim happens *inside* the thread: a rebuild already
 /// generating owns the slot, and its force-queue covers every row anyway, so
 /// yielding here loses nothing (§9.3, one Thumbs job — c9 decision 1).
-fn mop_up_thumbs(
+pub(crate) fn mop_up_thumbs(
     app: AppHandle,
     jobs: Arc<JobRegistry>,
     resolver: PathResolver,
@@ -250,6 +250,35 @@ pub fn media_detail(
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
     Ok(db::media_detail(&pool, &id)?)
+}
+
+/// §8.1 `media_scope_video` — the lightbox's one-file scope grant (c13 fix,
+/// human-approved 2026-10-05).
+///
+/// The asset protocol is scoped to `Thumbnails/` only (§6.7, c10 decision),
+/// which can never serve a video's frames. When the lightbox opens a video this
+/// one file under `Media/` is granted — a narrow amendment of C10's "never
+/// `Media/`": no directory grant, and `.vault` stays out (C6). The path is
+/// derived from the resolver, never accepted from the frontend; a missing row
+/// or an image simply grants nothing. Additive and irreversible per boot (§14's
+/// reset clears it), which a file just shown on screen does not merit worrying
+/// about.
+#[tauri::command]
+pub fn media_scope_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    let Some(media) = db::media_detail(&pool, &id)? else {
+        return Ok(());
+    };
+    if media.file_type == "video" {
+        let abs = snapshot.resolver.rel_to_abs(&media.relative_path)?;
+        crate::core::thumbs::scope_video(&app, &abs);
+    }
+    Ok(())
 }
 
 /// §8.1 `media_reveal` — Explorer on the media's folder. The path is derived

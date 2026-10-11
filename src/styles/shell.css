@@ -1527,6 +1527,14 @@
   object-fit: contain;
 }
 
+/* c13 fix (2026-10-05): a `<video>` with no frame yet reports its 300x150
+   default box, so the player looked tiny until play. `width: 100%` makes it
+   fill the pane from the first paint, exactly as it does while playing. */
+video.md-lightbox__image {
+  width: 100%;
+  background-color: #000;
+}
+
 .md-lightbox__panel {
   display: flex;
   flex-direction: column;

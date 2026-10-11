@@ -84,6 +84,10 @@ const FFMPEG_TIMEOUT_SECS: u64 = 60;
 /// next to the render itself and keeps the timeout honest.
 const FFMPEG_POLL: Duration = Duration::from_millis(25);
 
+/// §7.6's representative video frame: one second in. A clip shorter than this
+/// has no frame there, so [`run_video_frame`] retries without the seek.
+const SEEK_ONE_SECOND: &str = "00:00:01";
+
 /// §7.6's raster route: the formats the `image` crate decodes natively —
 /// exactly `exif::IMAGE_EXTS` minus the containers ffmpeg owns. The partition
 /// is asserted by a test, so adding an extension to §7.4.1 without a thumbnail
@@ -420,10 +424,13 @@ fn still_via_ffmpeg(
     write_webp(thumb_200, &big.thumbnail(200, 200))
 }
 
-/// §7.6's MOV/MP4 route: the tiny slot first, then the 400 — two passes, one
-/// shared 60 s deadline, and two *separate* publishes: an interrupt between
-/// them leaves a half-pair, which the existence check treats as "still owed",
-/// so the next mop-up simply redoes both.
+/// §7.6's MOV/MP4 route (amended 2026-10-11): one ffmpeg pass into the 400
+/// slot, then the 200 derived from that frame through the raster code — exactly
+/// the HEIC path. The retired second pass forced `-s 320x180`, which stretched
+/// every portrait video into a 16:9 box; the tile showed that squashed 200 until
+/// the hover upgrade swapped in the correct 400 (PLAN §7.6 decision 6, the gate
+/// flag left open then fixed here). Deriving both slots from one aspect-correct
+/// frame also spends one ffmpeg spawn per video instead of two.
 fn video_via_ffmpeg(
     ffmpeg: &Path,
     media: &Path,
@@ -431,58 +438,62 @@ fn video_via_ffmpeg(
     thumb_200: &Path,
 ) -> Result<(), ThumbError> {
     let deadline = Instant::now() + Duration::from_secs(FFMPEG_TIMEOUT_SECS);
-    let tmp_200 = tmp_path(thumb_200);
-    let tmp_400 = tmp_path(thumb_400);
-    run_ffmpeg(
-        ffmpeg,
-        &video_200_args(media, &tmp_200),
-        &tmp_200,
-        media,
-        deadline,
-    )?;
-    run_ffmpeg(
-        ffmpeg,
-        &video_400_args(media, &tmp_400),
-        &tmp_400,
-        media,
-        deadline,
-    )?;
-    rename_replace(&tmp_400, thumb_400)?;
-    rename_replace(&tmp_200, thumb_200)
+    let tmp = tmp_path(thumb_400);
+    run_video_frame(ffmpeg, media, &tmp, deadline)?;
+    rename_replace(&tmp, thumb_400)?;
+
+    let big = decode(thumb_400)?;
+    write_webp(thumb_200, &big.thumbnail(200, 200))
 }
 
-/// §7.6 verbatim — MOV/MP4, slot 200. `-s 320x180` is PLAN's exact flag: it
-/// stretches a portrait video (gate note, not a silent change).
-fn video_200_args(media: &Path, out: &Path) -> Vec<String> {
-    vec![
-        "-hide_banner".into(),
-        "-loglevel".into(),
-        "error".into(),
-        "-ss".into(),
-        "00:00:01".into(),
-        "-i".into(),
-        media.display().to_string(),
-        "-vframes".into(),
-        "1".into(),
-        "-s".into(),
-        "320x180".into(),
-        "-f".into(),
-        "webp".into(),
-        out.display().to_string(),
-    ]
+/// The video frame grab, with a second chance for clips shorter than §7.6's
+/// one-second seek. A Live Photo or a sub-second clip has no frame at 1 s, so
+/// ffmpeg hands the WebP encoder zero frames and it fails with a misleading
+/// `-12 (Cannot allocate memory)`. The retry drops the seek and takes the first
+/// frame; the first error is kept, so a genuinely broken file still reports its
+/// real cause rather than the retry's.
+fn run_video_frame(
+    ffmpeg: &Path,
+    media: &Path,
+    out: &Path,
+    deadline: Instant,
+) -> Result<(), ThumbError> {
+    match run_ffmpeg(
+        ffmpeg,
+        &video_400_args(media, out, Some(SEEK_ONE_SECOND)),
+        out,
+        media,
+        deadline,
+    ) {
+        Ok(()) => Ok(()),
+        Err(first) => run_ffmpeg(
+            ffmpeg,
+            &video_400_args(media, out, None),
+            out,
+            media,
+            deadline,
+        )
+        .map_err(|_| first),
+    }
 }
 
-/// §7.6's second MOV/MP4 pass: same second of seek, scaled to fit the 400 slot
-/// instead of forced into the 320×180 box.
-fn video_400_args(media: &Path, out: &Path) -> Vec<String> {
-    vec![
-        "-hide_banner".into(),
-        "-loglevel".into(),
-        "error".into(),
-        "-ss".into(),
-        "00:00:01".into(),
+/// §7.6's MOV/MP4 pass, scaled to fit the 400 slot with the aspect preserved.
+/// `seek` is `Some("00:00:01")` for the normal grab and `None` for the
+/// short-clip retry (see [`run_video_frame`]); `-ss` is an input option, so it
+/// must precede `-i`. `-map 0:v:0` (2026-10-05 amendment, see `still_400_args`)
+/// picks the video stream explicitly, so a MOV carrying a thumbnail/data stream
+/// cannot shadow it.
+fn video_400_args(media: &Path, out: &Path, seek: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into()];
+    if let Some(seek) = seek {
+        args.push("-ss".into());
+        args.push(seek.into());
+    }
+    args.extend([
         "-i".into(),
         media.display().to_string(),
+        "-map".into(),
+        "0:v:0".into(),
         "-vframes".into(),
         "1".into(),
         "-vf".into(),
@@ -490,11 +501,19 @@ fn video_400_args(media: &Path, out: &Path) -> Vec<String> {
         "-f".into(),
         "webp".into(),
         out.display().to_string(),
-    ]
+    ]);
+    args
 }
 
 /// §7.6 verbatim — HEIC/AVIF still: no `-ss` (there is no timeline to seek)
-/// and a frame count instead of a video count.
+/// and a frame count instead of a video count. The one amendment to the §7.6
+/// argv (2026-10-05, real hardware): `-map 0:v:0` after `-i`. Without an
+/// explicit map, ffmpeg 9 auto-selects and the HEIC still reaches the encoder
+/// with an internal complex filtergraph, so the simple `-vf scale` aborts with
+/// "Simple and complex filtering cannot be used together for the same stream"
+/// and *no* HEIC tile ever renders. The map disambiguates the stream and the
+/// same simple filter applies cleanly. It is inserted after `-i` on purpose:
+/// `-map` is an output option, and before `-i` it selects nothing.
 fn still_400_args(media: &Path, out: &Path) -> Vec<String> {
     vec![
         "-hide_banner".into(),
@@ -502,6 +521,8 @@ fn still_400_args(media: &Path, out: &Path) -> Vec<String> {
         "error".into(),
         "-i".into(),
         media.display().to_string(),
+        "-map".into(),
+        "0:v:0".into(),
         "-vf".into(),
         "scale=400:400:force_original_aspect_ratio=decrease".into(),
         "-frames:v".into(),
@@ -701,6 +722,15 @@ pub fn scope_thumbnails(app: &tauri::AppHandle, resolver: &PathResolver, previou
         // its no-thumbnail state instead of tiles.
         eprintln!("[wolfsmedia] asset scope for {}: {error}", thumbs.display());
     }
+}
+
+/// c13 fix (human-approved 2026-10-05): the lightbox plays videos from `Media/`
+/// itself, which the `Thumbnails/`-only scope cannot serve — a narrow amendment
+/// of C10's "never `Media/`". Only this one file is granted, per lightbox open;
+/// no directory and never `.vault` (C6). The grant is additive and has no
+/// removal (Tauri v2 scope semantics), so a re-open is a no-op.
+pub fn scope_video(app: &tauri::AppHandle, abs: &Path) {
+    let _ = app.asset_protocol_scope().allow_file(abs);
 }
 
 /// The extension, lowercased — `IMG_0001.JPG` is `jpg` whichever device wrote
@@ -1095,10 +1125,10 @@ mod tests {
     #[test]
     fn the_ffmpeg_invocations_are_the_ones_7_6_wrote() {
         let media = Path::new("E:\\SSD\\Media\\PC\\2024\\03\\clip.mov");
-        let out = Path::new("E:\\SSD\\Thumbnails\\200\\PC\\2024\\03\\clip.webp");
+        let out = Path::new("E:\\SSD\\Thumbnails\\400\\PC\\2024\\03\\clip.webp");
 
         assert_eq!(
-            video_200_args(media, out),
+            video_400_args(media, out, Some("00:00:01")),
             [
                 "-hide_banner",
                 "-loglevel",
@@ -1107,32 +1137,8 @@ mod tests {
                 "00:00:01",
                 "-i",
                 "E:\\SSD\\Media\\PC\\2024\\03\\clip.mov",
-                "-vframes",
-                "1",
-                "-s",
-                "320x180",
-                "-f",
-                "webp",
-                "E:\\SSD\\Thumbnails\\200\\PC\\2024\\03\\clip.webp",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>(),
-            "§7.6's MOV/MP4 slot-200 invocation, verbatim"
-        );
-
-        let out_400 = Path::new("E:\\SSD\\Thumbnails\\400\\PC\\2024\\03\\clip.webp");
-        let args_400 = video_400_args(media, out_400);
-        assert_eq!(
-            args_400,
-            [
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-ss",
-                "00:00:01",
-                "-i",
-                "E:\\SSD\\Media\\PC\\2024\\03\\clip.mov",
+                "-map",
+                "0:v:0",
                 "-vframes",
                 "1",
                 "-vf",
@@ -1144,7 +1150,31 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-            "the second MOV/MP4 pass: same seek, fitted to the 400 slot"
+            "§7.6's MOV/MP4 frame grab, seeked one second in (+ the 2026-10-05 -map amendment)"
+        );
+
+        assert_eq!(
+            video_400_args(media, out, None),
+            [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "E:\\SSD\\Media\\PC\\2024\\03\\clip.mov",
+                "-map",
+                "0:v:0",
+                "-vframes",
+                "1",
+                "-vf",
+                "scale=400:400:force_original_aspect_ratio=decrease",
+                "-f",
+                "webp",
+                "E:\\SSD\\Thumbnails\\400\\PC\\2024\\03\\clip.webp",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+            "the short-clip fallback: no seek, first frame (run_video_frame)"
         );
 
         let still = Path::new("E:\\SSD\\Media\\PC\\IMG_1.HEIC");
@@ -1157,6 +1187,8 @@ mod tests {
                 "error",
                 "-i",
                 "E:\\SSD\\Media\\PC\\IMG_1.HEIC",
+                "-map",
+                "0:v:0",
                 "-vf",
                 "scale=400:400:force_original_aspect_ratio=decrease",
                 "-frames:v",
@@ -1168,7 +1200,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>(),
-            "§7.6's HEIC invocation, verbatim"
+            "§7.6's HEIC invocation (+ the 2026-10-05 -map amendment)"
         );
     }
 

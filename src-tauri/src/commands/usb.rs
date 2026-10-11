@@ -130,8 +130,26 @@ fn start(
         // used to leave `JobKind::IngestUsb` claimed forever, and the next click
         // would be refused with `E_CONFLICT` against a job that no longer exists.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // c13 fix: an ingest is a write, so the "counts moved" signal must
+            // leave the same channel the scan uses (§10.5) or the Mídia screen —
+            // which listens only to `wolfs://db-changed` — stays stale after a
+            // USB pass. The same event also triggers the §7.6 thumbnail mop-up
+            // (c9 decision 1): ingest rows land without a render pass, so their
+            // tiles stay grey until a scan rebuilds them. The check runs before
+            // the emit moves the event.
             let emit = |event: IngestEventDto| {
+                let is_db_change = matches!(event, IngestEventDto::DbChanged);
                 let _ = app_for_events.emit(channels::INGEST_PROGRESS, event);
+                if is_db_change {
+                    let _ = app_for_events.emit(channels::DB_CHANGED, ());
+                    super::media::mop_up_thumbs(
+                        app_for_events.clone(),
+                        Arc::clone(&jobs_for_thread),
+                        resolver.clone(),
+                        pool.clone(),
+                        ffmpeg.clone(),
+                    );
+                }
             };
             run_job(
                 Job {

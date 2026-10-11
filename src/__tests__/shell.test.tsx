@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from '../app/AppShell'
@@ -97,6 +97,8 @@ function defaultMock(command: string, _args?: unknown): unknown {
       return { items: [], total: 0, hasMore: false }
     case 'media_detail':
       return MEDIA_PAGE.items[0]
+    case 'media_scope_video':
+      return null
     // The Backup screen mounts the USB hook for every tab (the job lives in the
     // Rust `JobRegistry`, so the subscription must not depend on which tab is
     // open). The truthful default in a test is an empty cable.
@@ -1423,6 +1425,94 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+  })
+
+  it('re-queries the gallery when an ingest broadcasts db-changed (c13 fix)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+    const before = invokeMock.mock.calls.filter(([command]) => command === 'media_query').length
+
+    // Feed every `wolfs://db-changed` subscriber, the way `ingestAll` does for
+    // the ingest channel: the real runtime delivers to all of them, and the
+    // gallery's own subscription is what re-queries the page.
+    const { listen } = await import('@tauri-apps/api/event')
+    const dbHandlers = vi
+      .mocked(listen)
+      .mock.calls.filter(([channel]) => channel === 'wolfs://db-changed')
+      .map(([, handler]) => handler as (event: { payload: null }) => void)
+    expect(dbHandlers.length).toBeGreaterThan(0)
+    act(() => {
+      for (const handler of dbHandlers) {
+        handler({ payload: null })
+      }
+    })
+
+    await waitFor(() => {
+      const after = invokeMock.mock.calls.filter(([command]) => command === 'media_query').length
+      expect(after).toBeGreaterThan(before)
+    })
+  })
+
+  it('load more appends the next page without unmounting the grid (c13 fix)', async () => {
+    const first = { items: [MEDIA_PAGE.items[0]], total: 2, hasMore: true }
+    const second = { items: [MEDIA_PAGE.items[1]], total: 2, hasMore: false }
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        const offset = (args as { spec: { offset: number } }).spec.offset
+        return offset === 0 ? first : second
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+    expect(await screen.findAllByTestId('media-tile')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Carregar mais' }))
+
+    // The second tile *appends* — the first one is still mounted (a window
+    // replace would have sent the scroll to the top and shown VID_2 only).
+    await waitFor(() => {
+      expect(screen.getAllByTestId('media-tile')).toHaveLength(2)
+    })
+    expect(screen.getByText('IMG_1.jpg')).not.toBeNull()
+    // The page is exhausted, so the button leaves.
+    expect(screen.queryByRole('button', { name: 'Carregar mais' })).toBeNull()
+  })
+
+  it('plays a video in the lightbox via the scoped Media/ file (c13 fix)', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return { items: [MEDIA_PAGE.items[1]], total: 1, hasMore: false }
+      }
+      if (command === 'media_detail') {
+        return MEDIA_PAGE.items[1]
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+    fireEvent.click(await screen.findByTestId('media-tile'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    await waitFor(() => {
+      expect(dialog.querySelector('video')).not.toBeNull()
+    })
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'media_scope_video'),
+    ).toHaveLength(1)
+    // 2026-10-11: opening a video starts it playing — the poster is only a frame
+    // until playback begins, never a result the human has to press play on.
+    await waitFor(() => expect(play).toHaveBeenCalled())
   })
 
   it('shows Clear All only when two or more filters are active (C10)', async () => {

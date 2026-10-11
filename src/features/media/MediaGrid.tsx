@@ -14,6 +14,22 @@ const INFO_HEIGHT = 48
 const VIRTUALIZE_ABOVE = 1000
 /** The virtual grid is 4 columns wide (one row per virtualizer index). */
 const VIRTUAL_COLUMNS = 4
+/**
+ * c13 fix (2026-10-05): a thumbnail is produced in the background (the §7.6
+ * boot/ingest/scan mop-up), so a tile that 404s at first paint may exist a
+ * second later. Instead of hiding it forever, the image retries with a
+ * cache-buster until it lands — bounded, so a permanently missing tile (e.g. an
+ * ffmpeg-only video with no host) settles into its name+meta state.
+ *
+ * 2026-10-11: the window now covers a whole regeneration sweep, not just a
+ * scan's tail. Regenerating a real library (hundreds of tiles, one ffmpeg pass
+ * each) runs for minutes; a 30 s ladder gave up long before the files landed, so
+ * a tile stayed grey until a hover swapped in the 400 (§10.6.5). 300 × 1.5 s is
+ * a 7.5 min ceiling, and `loading="lazy"` keeps the retries to tiles near the
+ * viewport, so the window stays cheap.
+ */
+const THUMB_RETRY_LIMIT = 300
+const THUMB_RETRY_MS = 1500
 
 /**
  * §10.6.5 `MediaGrid` — virtualized grid with LQIP tiles.
@@ -216,20 +232,10 @@ function MediaTile({
     >
       <div className="media-tile__image">
         {/* c10: sources go through the asset protocol (`assetUrl`), scoped
-            backend-side to `Thumbnails/` only. An empty src or a missing file
-            hides the img and the tile still shows the name + meta, never a
-            broken-image icon. */}
-        {src ? (
-          <img
-            src={src}
-            alt=""
-            loading="lazy"
-            className="media-tile__img"
-            onError={(e) => {
-              ;(e.target as HTMLImageElement).style.display = 'none'
-            }}
-          />
-        ) : null}
+            backend-side to `Thumbnails/` only. `ThumbImage` retries while the
+            background mop-up writes the tile; a source that never arrives leaves
+            the name + meta, never a broken-image icon. */}
+        <ThumbImage key={hovered ? 'hi' : 'lo'} src={src} />
         {item.fileType === 'video' ? <span className="media-tile__badge">▶</span> : null}
       </div>
       <div className="media-tile__overlay">
@@ -261,5 +267,40 @@ function MediaTile({
         </span>
       </div>
     </article>
+  )
+}
+
+/**
+ * A tile's image with a bounded reload ladder. The `key` at the call site
+ * remounts it on a hover swap, so the retry count never leaks across sources.
+ */
+function ThumbImage({ src }: { src: string }) {
+  const [retry, setRetry] = useState(0)
+  const [hidden, setHidden] = useState(false)
+  const timer = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timer.current !== null) window.clearTimeout(timer.current)
+    }
+  }, [])
+
+  if (!src || hidden) return null
+  const url = retry > 0 ? `${src}?r=${retry}` : src
+
+  return (
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      className="media-tile__img"
+      onError={() => {
+        if (retry >= THUMB_RETRY_LIMIT) {
+          setHidden(true)
+          return
+        }
+        timer.current = window.setTimeout(() => setRetry((n) => n + 1), THUMB_RETRY_MS)
+      }}
+    />
   )
 }

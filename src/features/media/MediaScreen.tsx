@@ -118,7 +118,11 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
 
       {/* [Z3f] Load more — auto page-in at 80% of the virtual window. */}
       {query.data?.hasMore ? (
-        <Button variant="text" onClick={query.loadMore} disabled={query.loading}>
+        <Button
+          variant="text"
+          onClick={query.loadMore}
+          disabled={query.loading || query.loadingMore}
+        >
           {t('media.loadMore')}
         </Button>
       ) : null}

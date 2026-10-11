@@ -1,17 +1,25 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useRef, useState } from 'react'
 import { useI18n, useToast } from '../../hooks/useContexts'
 import { useAsync } from '../../hooks/useAsync'
 import { toAppError } from '../../lib/errors'
-import { mediaDetail, mediaReveal } from '../../lib/ipc'
+import { mediaDetail, mediaReveal, mediaScopeVideo } from '../../lib/ipc'
 import { formatBytes } from '../../lib/format'
 import type { MediaDto } from '../../types/api'
-import { thumbUrl } from './assetUrl'
+import { mediaUrl, thumbUrl } from './assetUrl'
 
 /**
  * §11.4 `MediaLightbox` — the media detail overlay.
  *
  * Shows the 400px preview, filename, metadata table, and location. Keyboard:
  * `Esc` close, `←/→` navigate (placeholder for now — single-item only).
+ *
+ * c13 fix (human-approved 2026-10-05): a video renders as a real `<video>`
+ * player, fed from its `Media/` file — which requires the per-file scope grant
+ * `media_scope_video` to land first, so the element mounts only after the
+ * promise resolves. Images keep the `Thumbnails/`-scoped preview.
+ *
+ * 2026-10-11 (human): opening a video starts playback on the spot. The poster is
+ * a frame until it begins, never a static result the human has to press play on.
  */
 export function MediaLightbox({
   id,
@@ -25,6 +33,58 @@ export function MediaLightbox({
   const { t } = useI18n()
   const { pushError } = useToast()
   const { data, loading, error } = useAsync<MediaDto | null>(() => mediaDetail(id), [id])
+  const [videoScoped, setVideoScoped] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    // The lightbox mounts fresh for every open (MediaScreen keys it by id), so
+    // `videoScoped` starts false here; only a video ever grants.
+    if (data?.fileType !== 'video') {
+      return
+    }
+    let alive = true
+    mediaScopeVideo(data.id)
+      .then(() => {
+        if (alive) {
+          setVideoScoped(true)
+        }
+      })
+      .catch(() => {
+        // A failed grant leaves the poster/placeholder up; the detail still
+        // reads. Scoping is additive and re-attempts on the next open.
+      })
+    return () => {
+      alive = false
+    }
+  }, [data])
+
+  useEffect(() => {
+    if (!videoScoped || data?.fileType !== 'video') return
+    const video = videoRef.current
+    if (!video) return
+    let alive = true
+    const play = async () => {
+      try {
+        await video.play()
+      } catch {
+        if (!alive) return
+        // Opening the tile is a user gesture, so the unmuted play is normally
+        // allowed; if the policy still refuses, a muted play shows the frame
+        // and the controls let the human unmute.
+        video.muted = true
+        try {
+          await video.play()
+        } catch {
+          // Leave the poster and the controls up.
+        }
+      }
+    }
+    void play()
+    return () => {
+      alive = false
+      video.pause()
+    }
+  }, [videoScoped, data])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -70,14 +130,26 @@ export function MediaLightbox({
       <div className="md-lightbox__backdrop" onClick={onClose} />
       <div className="md-lightbox__content">
         <div className="md-lightbox__main">
-          <img
-            src={thumbUrl(root, data.thumb400)}
-            alt={data.relativePath}
-            className="md-lightbox__image"
-            onError={(e) => {
-              ;(e.target as HTMLImageElement).style.display = 'none'
-            }}
-          />
+          {data.fileType === 'video' && videoScoped ? (
+            <video
+              ref={videoRef}
+              className="md-lightbox__image"
+              src={mediaUrl(root, data.relativePath)}
+              poster={thumbUrl(root, data.thumb400) || undefined}
+              controls
+              playsInline
+              preload="auto"
+            />
+          ) : (
+            <img
+              src={thumbUrl(root, data.thumb400)}
+              alt={data.relativePath}
+              className="md-lightbox__image"
+              onError={(e) => {
+                ;(e.target as HTMLImageElement).style.display = 'none'
+              }}
+            />
+          )}
         </div>
         <div className="md-lightbox__panel">
           <h2 className="md-lightbox__title">{data.relativePath.split('/').pop()}</h2>

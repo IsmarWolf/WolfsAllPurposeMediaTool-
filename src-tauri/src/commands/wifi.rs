@@ -32,15 +32,33 @@ pub fn ingest_wifi_start(
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
     let app_for_events = app.clone();
+    let resolver = snapshot.resolver.clone();
+    let ffmpeg = ffmpeg_path(&snapshot);
+    let jobs = state.jobs();
     let shared = wifi::Shared::new(
-        snapshot.resolver.clone(),
-        pool,
+        resolver.clone(),
+        pool.clone(),
         Arc::clone(&snapshot.geocoder),
-        ffmpeg_path(&snapshot),
-        state.jobs(),
+        ffmpeg.clone(),
+        jobs.clone(),
     )
     .with_event_sink(move |event: IngestEventDto| {
+        // c13 fix (same rule as `commands/usb.rs`): an upload batch that moved
+        // counts leaves the `wolfs://db-changed` signal the frontend listens for,
+        // and hands the §7.6 thumbnail mop-up the rows that just landed — the
+        // Wi-Fi pipeline runs §7.3's scanner with no render pass behind it.
+        let is_db_change = matches!(event, IngestEventDto::DbChanged);
         let _ = app_for_events.emit(channels::INGEST_PROGRESS, event);
+        if is_db_change {
+            let _ = app_for_events.emit(channels::DB_CHANGED, ());
+            super::media::mop_up_thumbs(
+                app_for_events.clone(),
+                jobs.clone(),
+                resolver.clone(),
+                pool.clone(),
+                ffmpeg.clone(),
+            );
+        }
     });
 
     let server = Arc::new(wifi::start(shared)?);

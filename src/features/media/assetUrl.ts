@@ -14,6 +14,21 @@ import { convertFileSrc } from '@tauri-apps/api/core'
  * a tile is not worth taking the gallery down for.
  */
 export function thumbUrl(root: string | null | undefined, relative: string): string {
+  return scopedUrl(root, relative)
+}
+
+/**
+ * §8.1/c13 fix (human-approved 2026-10-05): the lightbox plays a video from its
+ * `Media/` file, which is only possible because the backend granted that one
+ * file to the asset protocol (`media_scope_video`) — the `Thumbnails/` scope
+ * cannot serve a frame. Images never come this way. Same empty-string-on-failure
+ * contract as `thumbUrl`; a not-yet-scoped video is the safe blank state.
+ */
+export function mediaUrl(root: string | null | undefined, relative: string): string {
+  return scopedUrl(root, relative)
+}
+
+function scopedUrl(root: string | null | undefined, relative: string): string {
   if (!root || !relative) return ''
   const absolute = `${root.replace(/\\/g, '/').replace(/\/+$/, '')}/${relative.replace(/\\/g, '/')}`
   try {
