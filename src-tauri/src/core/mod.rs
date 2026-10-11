@@ -1,5 +1,6 @@
 pub mod db;
 pub mod exif;
+pub mod filters;
 pub mod geocode;
 pub mod layout;
 pub mod models;

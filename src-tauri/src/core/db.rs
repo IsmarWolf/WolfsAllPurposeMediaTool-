@@ -1,5 +1,7 @@
-//! SQLite layer (PLAN §6). Owns **all** SQL (§6.5) — higher modules never see
-//! `rusqlite` types.
+//! SQLite layer (PLAN §6). Every statement is **executed** here and higher
+//! modules never see `rusqlite` types; the `FilterSpec` -> SQL translation is the
+//! one exception that lives in its own module (`core::filters`, §7.2c), so the
+//! gallery and the snapshot builder share it.
 //!
 //! The five tables of §6.1 are created verbatim (with `IF NOT EXISTS`, so
 //! `apply_schema` is safe on every boot), followed by the §6.3 indexes and the
@@ -277,71 +279,13 @@ pub fn media_query(pool: &SqlitePool, spec: &FilterSpec) -> Result<MediaQueryDto
         .get()
         .map_err(|error| DbError::Pool(error.to_string()))?;
 
-    let mut clauses: Vec<String> = vec!["m.is_hidden = ?1".to_string()];
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(spec.scope.hidden_value())];
-
-    if let Some(device) = &spec.device {
-        clauses.push(format!("m.device_name = ?{}", params.len() + 1));
-        params.push(Box::new(device.clone()));
-    }
-
-    if !spec.cities.is_empty() {
-        let placeholders: Vec<String> = (0..spec.cities.len())
-            .map(|i| format!("?{}", params.len() + i + 1))
-            .collect();
-        clauses.push(format!("LOWER(l.city) IN ({})", placeholders.join(", ")));
-        for city in &spec.cities {
-            params.push(Box::new(city.to_lowercase()));
-        }
-    }
-
-    if let Some(month) = &spec.month {
-        clauses.push(format!(
-            "strftime('%Y-%m', m.captured_at) = ?{}",
-            params.len() + 1
-        ));
-        params.push(Box::new(month.clone()));
-    }
-
-    if spec.no_metadata {
-        clauses.push("m.has_metadata = 0".to_string());
-    }
-
-    if let Some(search) = &spec.search {
-        // Fuzzy subsequence on the *filename* (§10.6.1), not the whole path:
-        // a whole-path match lets "IMG" hit `Sem_Metadados/bare.jpg` through
-        // `...m...g(.jpg)`. The filename is the tail after the last `/`
-        // (`RTRIM` strips the trailing non-slash run, `REPLACE` drops the head).
-        // User input is escaped first, then the wildcards are added.
-        let escaped: Vec<String> = search
-            .chars()
-            .map(|c| match c {
-                '\\' => "\\\\".to_string(),
-                '%' => "\\%".to_string(),
-                '_' => "\\_".to_string(),
-                _ => c.to_string(),
-            })
-            .collect();
-        clauses.push(format!(
-            "LOWER(REPLACE(m.relative_path, RTRIM(m.relative_path, REPLACE(m.relative_path, '/', '')), '')) LIKE ?{} ESCAPE '\\'",
-            params.len() + 1
-        ));
-        params.push(Box::new(format!("%{}%", escaped.join("%").to_lowercase())));
-    }
-
-    if let Some(file_type) = &spec.file_type {
-        clauses.push(format!("m.file_type = ?{}", params.len() + 1));
-        params.push(Box::new(file_type.clone()));
-    }
-
-    let where_sql = clauses.join(" AND ");
-
-    let order_sql = match spec.sort.as_str() {
-        "capturedAsc" => "m.captured_at ASC",
-        "name" => "m.relative_path ASC",
-        "size" => "m.file_size DESC",
-        _ => "m.captured_at DESC",
-    };
+    // §7/c14: the whole filter -> SQL translation lives in `filters.rs`, so the
+    // gallery and the snapshot builder compile a spec the same way. `params` are
+    // the bound filters in placeholder order; LIMIT/OFFSET are appended below.
+    let filter = crate::core::filters::build(spec);
+    let where_sql = filter.where_sql();
+    let order_sql = &filter.order;
+    let params = &filter.params;
 
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM media m LEFT JOIN locations l ON l.media_id = m.id WHERE {where_sql}"),
