@@ -71,7 +71,12 @@ const MAX_PARTS: usize = 2_000;
 type Reply = Response<std::io::Cursor<Vec<u8>>>;
 
 fn with_type(response: Reply, mime: &str) -> Reply {
-    match Header::from_bytes(Vec::new(), format!("Content-Type: {mime}").into_bytes()) {
+    // `from_bytes` takes the **field name** and the **value** separately.
+    // Passing an empty name here (the c11 bug) produced a nameless header, so
+    // the response kept `Response::from_string`'s default `text/plain` and a
+    // phone rendered the upload page's HTML source as text. `add_header`
+    // overwrites an existing `Content-Type`, which is exactly what we want.
+    match Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()) {
         Ok(header) => response.with_header(header),
         // A literal ASCII header we just built: this cannot fail in practice.
         Err(_) => response,

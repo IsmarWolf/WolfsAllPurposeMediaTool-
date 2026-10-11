@@ -405,7 +405,18 @@ fn this_machine_has_an_ip_or_it_is_only_reported() {
 
 struct Reply {
     status: u16,
+    headers: Vec<(String, String)>,
     body: String,
+}
+
+impl Reply {
+    /// A response header by name, case-insensitively. Lower-cased on the way in.
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 fn request(addr: SocketAddr, raw: &[u8]) -> Reply {
@@ -420,14 +431,19 @@ fn request(addr: SocketAddr, raw: &[u8]) -> Reply {
     stream.read_to_string(&mut text).unwrap();
 
     let (head, body) = text.split_once("\r\n\r\n").expect("a complete response");
-    let status: u16 = head
-        .lines()
+    let mut lines = head.lines();
+    let status: u16 = lines
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
         .expect("a status line");
+    let headers = lines
+        .filter_map(|line| line.split_once(':'))
+        .map(|(field, value)| (field.trim().to_ascii_lowercase(), value.trim().to_string()))
+        .collect();
     Reply {
         status,
+        headers,
         body: body.to_string(),
     }
 }
@@ -467,6 +483,11 @@ fn the_page_is_served_in_both_languages() {
         pt.body.contains("Nome do aparelho"),
         "the label field is there"
     );
+    assert_eq!(
+        pt.header("content-type"),
+        Some("text/html; charset=utf-8"),
+        "the phone must render the page, not show its HTML source"
+    );
 
     let en = request(
         addr,
@@ -474,6 +495,11 @@ fn the_page_is_served_in_both_languages() {
     );
     assert_eq!(en.status, 200);
     assert!(en.body.contains("Upload to the SSD"));
+    assert_eq!(
+        en.header("content-type"),
+        Some("text/html; charset=utf-8"),
+        "the English page is HTML too"
+    );
 
     assert_eq!(
         request(
@@ -482,6 +508,41 @@ fn the_page_is_served_in_both_languages() {
         )
         .status,
         404
+    );
+
+    server.stop().unwrap();
+}
+
+/// The c11 regression the human hit on a real phone: `with_type` was handed an
+/// empty field name, so the response kept `Response::from_string`'s default
+/// `text/plain` and scanning the QR showed the upload page as raw HTML text
+/// instead of rendering it. The fix makes tiny_http overwrite that default.
+#[test]
+fn the_upload_page_is_served_as_html_not_as_plain_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (addr, server) = bind(temp_shared(dir.path(), events));
+
+    let page = request(
+        addr,
+        b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    assert_eq!(
+        page.header("content-type"),
+        Some("text/html; charset=utf-8"),
+        "a phone renders HTML only when the response says so; headers were {:?}",
+        page.headers
+    );
+
+    let done = request(
+        addr,
+        b"GET /done HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    assert_eq!(
+        done.header("content-type"),
+        Some("application/json"),
+        "the phone's fetch('/done').json() must not be lied to; headers were {:?}",
+        done.headers
     );
 
     server.stop().unwrap();
