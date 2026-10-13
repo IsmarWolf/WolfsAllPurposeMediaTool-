@@ -6,7 +6,8 @@
 //! The five tables of §6.1 are created verbatim (with `IF NOT EXISTS`, so
 //! `apply_schema` is safe on every boot), followed by the §6.3 indexes and the
 //! §14 `process_log` diagnostics table. `PRAGMA user_version` gates migrations
-//! (§6.4); v0 → v1 is "current".
+//! (§6.4); v1 → v2 adds `media.added_at` (the import timestamp).
+//! v0 → v1 was the first build.
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -15,15 +16,15 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::core::models::{
-    DeviceCountDto, FilterSpec, LocationDto, MediaDto, MediaQueryDto, MediaScope, StatsDto,
-    VaultStatusDto,
+    CityCountDto, DeviceCountDto, FilterSpec, LocationDto, MediaDto, MediaQueryDto, MediaScope,
+    StatsDto, VaultStatusDto,
 };
 use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
 
-/// §6.4: "Migration v0 -> v1 is current".
-pub const SCHEMA_VERSION: i64 = 1;
+/// §6.4: "Migration v1 -> v2 is current" — v2 adds `media.added_at`.
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// §6.2: max 3 connections — WAL allows concurrent readers + one writer, and the
 /// background scanner (c6) takes at most one.
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS media (
     file_size       INTEGER,
     file_type       TEXT,                        -- "image" | "video"
     captured_at     DATETIME,                    -- NULL when unknown
+    added_at        DATETIME,                    -- import timestamp, NULL for v1 rows
     has_metadata    BOOLEAN DEFAULT 1,
     is_hidden       BOOLEAN DEFAULT 0,
     device_name     TEXT
@@ -169,15 +171,26 @@ pub fn open(resolver: &PathResolver) -> Result<SqlitePool, DbError> {
     Ok(pool)
 }
 
-/// Creates the tables, indexes and the §14 log, then stamps `user_version`.
+/// Creates the tables, indexes and the §14 log, then walks the migration
+/// ladder and stamps `user_version`.
 ///
-/// One transaction: a failure leaves the DB untouched (§6.4).
+/// One transaction: a failure leaves the DB untouched (§6.4). A fresh database
+/// has `user_version` 0 — `VERBATIM_SCHEMA` already carries the newest shape, so
+/// it is stamped directly. An existing v1 database gets `media.added_at` via
+/// `ALTER TABLE` before the stamp.
 pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     let tx = conn.transaction()?;
     tx.execute_batch(VERBATIM_SCHEMA)?;
     tx.execute_batch(INDEXES)?;
     tx.execute_batch(PROCESS_LOG_SCHEMA)?;
     tx.execute_batch(THUMB_META_SCHEMA)?;
+
+    // Migration ladder (§6.4): v1 -> v2 adds media.added_at.
+    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == 1 {
+        tx.execute_batch("ALTER TABLE media ADD COLUMN added_at DATETIME")?;
+    }
+
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
@@ -267,6 +280,37 @@ pub fn stats(pool: &SqlitePool, scope: MediaScope) -> Result<StatsDto, DbError> 
         device_count: top_devices.len() as i64,
         top_devices,
     })
+}
+
+/// §7.2 `list_city_counts` — the L2 `Localização` tag-cloud (§10.6.1): how many
+/// media sit in each city, most-populated first. The scope is bound like every
+/// other read (§6.6), so the tag-cloud can never count hidden rows in Standard
+/// scope; only rows that actually have a `locations` row are offered.
+pub fn city_counts(pool: &SqlitePool, scope: MediaScope) -> Result<Vec<CityCountDto>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT l.city, l.country, COUNT(*)
+         FROM media m
+         JOIN locations l ON l.media_id = m.id
+         WHERE m.is_hidden = ?1 AND l.city IS NOT NULL AND l.city <> ''
+         GROUP BY l.city, l.country
+         ORDER BY COUNT(*) DESC, l.city ASC",
+    )?;
+
+    let rows = stmt
+        .query_map([scope.hidden_value()], |row| {
+            Ok(CityCountDto {
+                city: row.get(0)?,
+                country: row.get(1)?,
+                count: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
 }
 
 /// §8.1 `media_query` — one page of gallery results, filtered + sorted.
@@ -505,6 +549,10 @@ pub const SCAN_BATCH_ROWS: usize = 200;
 
 /// Inserts `rows` and their locations, returning how many were written.
 ///
+/// `added_at` is stamped by the SQL (the import moment), not by the caller, so
+/// every ingest path — scan, USB, Wi-Fi, Disco local — records the same fact
+/// without needing to remember it.
+///
 /// `INSERT` (not upsert) is deliberate: §7.3 step 2 has already decided what to
 /// do about existing content, so a conflict here means two files in one batch
 /// share a hash, and failing loudly beats silently overwriting a row whose
@@ -522,8 +570,9 @@ pub fn insert_media_batch(pool: &SqlitePool, rows: &[MediaInsert]) -> Result<usi
         let mut media = tx.prepare_cached(
             "INSERT INTO media
                 (id, relative_path, thumb_path, file_hash, file_size, file_type,
-                 captured_at, has_metadata, is_hidden, device_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+                 captured_at, added_at, has_metadata, is_hidden, device_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                     strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime'), ?8, 0, ?9)",
         )?;
         let mut location = tx.prepare_cached(
             "INSERT INTO locations (media_id, city, state, country, latitude, longitude)
@@ -932,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_schema_stamps_user_version_1() {
+    fn apply_schema_stamps_the_current_version() {
         let dir = tempfile::tempdir().unwrap();
         let mut conn = Connection::open(dir.path().join("app.db")).unwrap();
         assert!(needs_migration(&conn).unwrap());
@@ -944,6 +993,59 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    /// The migration ladder, pinned: a v1 database (a `media` table without
+    /// `added_at`) gains the column, keeps its rows and is stamped vintage 2 —
+    /// never downgraded, never left half-migrated (§6.4).
+    #[test]
+    fn a_v1_database_gains_added_at_and_stamps_v2() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("app.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE media (
+                id              TEXT PRIMARY KEY,
+                relative_path   TEXT NOT NULL UNIQUE,
+                thumb_path      TEXT NOT NULL,
+                file_hash       TEXT UNIQUE,
+                file_size       INTEGER,
+                file_type       TEXT,
+                captured_at     DATETIME,
+                has_metadata    BOOLEAN DEFAULT 1,
+                is_hidden       BOOLEAN DEFAULT 0,
+                device_name     TEXT
+             );
+             CREATE TABLE locations (
+                media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                city TEXT, state TEXT, country TEXT,
+                latitude REAL, longitude REAL
+             );
+             INSERT INTO media (id, relative_path, thumb_path, captured_at) VALUES
+                ('m1', 'a.jpg', 'a.webp', '2024-01-02 03:04:05');",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+
+        apply_schema(&mut conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(media)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|c| c == "added_at"));
+        let retained: i64 = conn
+            .query_row("SELECT COUNT(*) FROM media WHERE id = 'm1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, 1, "the migration never drops rows");
     }
 
     #[test]
@@ -1277,6 +1379,35 @@ mod tests {
         .unwrap();
         assert_eq!(tail.items.len(), 1);
         assert!(!tail.has_more);
+    }
+
+    /// The tag-cloud is a *scoped* count: a hidden row's city must never leak
+    /// into Standard, and only cities that actually have media are offered.
+    #[test]
+    fn city_counts_are_scoped_and_ordered_by_population() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+        // Give the hidden row a city too: the scope has to keep it out of Standard.
+        pool.get()
+            .unwrap()
+            .execute(
+                "INSERT INTO locations (media_id, city, state, country, latitude, longitude)
+                 VALUES ('g4', 'Rio de Janeiro', 'RJ', 'BR', -22.9, -43.2)",
+                [],
+            )
+            .unwrap();
+
+        let standard = city_counts(&pool, MediaScope::Standard).unwrap();
+        assert_eq!(standard.len(), 1, "only the visible city is offered");
+        assert_eq!(standard[0].city, "Sao Paulo");
+        assert_eq!(standard[0].country.as_deref(), Some("BR"));
+        assert_eq!(standard[0].count, 1);
+
+        let vault = city_counts(&pool, MediaScope::Vault).unwrap();
+        assert_eq!(vault.len(), 1, "the hidden row's city, and only it");
+        assert_eq!(vault[0].city, "Rio de Janeiro");
+        assert_eq!(vault[0].count, 1);
     }
 
     #[test]

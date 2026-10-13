@@ -8,12 +8,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { toAppError } from './errors'
 import type {
   AppVersionsDto,
+  CityCountDto,
   DeviceDto,
   FilterSpec,
   GeoDto,
   IngestUsbStartDto,
   MediaDto,
   MediaQueryDto,
+  MediaScopeDto,
   RecalcRootDto,
   RootInfoDto,
   ScanSummaryDto,
@@ -112,6 +114,9 @@ export const geoLookup = (lat: number, lon: number) =>
 
 /** §8.1 `media_query` — one page of gallery results. */
 export const mediaQuery = (spec: FilterSpec) => call<MediaQueryDto>('media_query', { spec })
+
+/** §8.1 `city_counts` — the L2 `Localização` tag-cloud (§10.6.1), scoped. */
+export const cityCounts = (scope: MediaScopeDto) => call<CityCountDto[]>('city_counts', { scope })
 
 /** §8.1 `media_detail` — one media item for the lightbox. */
 export const mediaDetail = (id: string) => call<MediaDto | null>('media_detail', { id })

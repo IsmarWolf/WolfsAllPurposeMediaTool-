@@ -32,6 +32,12 @@ export function FilterChips({
       remove: () => onUpdate({ device: null }),
     })
   }
+  spec.cities.forEach((city) => {
+    chips.push({
+      label: `${t('media.location')}: ${city}`,
+      remove: () => onUpdate({ cities: spec.cities.filter((c) => c !== city) }),
+    })
+  })
   if (spec.month) {
     chips.push({
       label: `${t('media.month')}: ${spec.month}`,

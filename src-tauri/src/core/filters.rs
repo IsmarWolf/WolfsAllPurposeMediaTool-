@@ -101,6 +101,10 @@ pub fn build(spec: &FilterSpec) -> FilterSql {
         "capturedAsc" => "m.captured_at ASC",
         "name" => "m.relative_path ASC",
         "size" => "m.file_size DESC",
+        // v2 sort: most recently *imported* first. Rows from before the column
+        // existed carry NULL and sort after every dated row (`IS NULL` first key),
+        // never pretending a legacy import happened "just now".
+        "addedDesc" => "m.added_at IS NULL, m.added_at DESC",
         _ => "m.captured_at DESC",
     }
     .to_string();
@@ -204,11 +208,11 @@ mod tests {
     /// months, a located row, a bare row and a hidden row.
     fn seed(conn: &Connection) {
         conn.execute_batch(
-            "INSERT INTO media (id, relative_path, thumb_path, file_hash, file_size, file_type, captured_at, has_metadata, is_hidden, device_name) VALUES
-               ('g1', 'Media/PC/2024/03/IMG_1.jpg',  'Thumbnails/400/PC/2024/03/IMG_1.webp',  'h1', 1000, 'image', '2024-03-15 10:00:00', 1, 0, 'PC'),
-               ('g2', 'Media/iPhone/2024/04/VID_2.mov','Thumbnails/400/iPhone/2024/04/VID_2.webp','h2', 2000, 'video', '2024-04-01 10:00:00', 1, 0, 'iPhone'),
-               ('g3', 'Media/PC/Sem_Metadados/bare.jpg','Thumbnails/400/PC/Sem_Metadados/bare.webp','h3', 500, 'image', NULL, 0, 0, 'PC'),
-               ('g4', 'Media/PC/2024/03/hidden.jpg', 'Thumbnails/400/PC/2024/03/hidden.webp', 'h4', 700, 'image', '2024-03-20 10:00:00', 1, 1, 'PC');
+            "INSERT INTO media (id, relative_path, thumb_path, file_hash, file_size, file_type, captured_at, added_at, has_metadata, is_hidden, device_name) VALUES
+               ('g1', 'Media/PC/2024/03/IMG_1.jpg',  'Thumbnails/400/PC/2024/03/IMG_1.webp',  'h1', 1000, 'image', '2024-03-15 10:00:00', '2026-06-01T09:00:00', 1, 0, 'PC'),
+               ('g2', 'Media/iPhone/2024/04/VID_2.mov','Thumbnails/400/iPhone/2024/04/VID_2.webp','h2', 2000, 'video', '2024-04-01 10:00:00', '2026-06-02T09:00:00', 1, 0, 'iPhone'),
+               ('g3', 'Media/PC/Sem_Metadados/bare.jpg','Thumbnails/400/PC/Sem_Metadados/bare.webp','h3', 500, 'image', NULL, NULL, 0, 0, 'PC'),
+               ('g4', 'Media/PC/2024/03/hidden.jpg', 'Thumbnails/400/PC/2024/03/hidden.webp', 'h4', 700, 'image', '2024-03-20 10:00:00', '2026-06-03T09:00:00', 1, 1, 'PC');
              INSERT INTO locations (media_id, city, state, country, latitude, longitude) VALUES
                ('g1', 'Sao Paulo', 'SP', 'BR', -23.5, -46.6);",
         )
@@ -469,5 +473,41 @@ mod tests {
         .unwrap();
         assert_eq!(tail.items.len(), 1);
         assert!(!tail.has_more);
+    }
+
+    /// v2's `addedDesc` reads import time, not capture time: g2 was imported
+    /// after g1 although it was captured before any of the others, and the
+    /// pre-v2 row (g3, NULL) sinks below every dated row instead of pretending
+    /// a legacy import happened "just now".
+    #[test]
+    fn added_desc_orders_by_import_time_with_nulls_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_pool(dir.path());
+        seed(&pool.get().unwrap());
+
+        let page = db::media_query(
+            &pool,
+            &FilterSpec {
+                sort: "addedDesc".into(),
+                ..spec()
+            },
+        )
+        .unwrap();
+        let ids: Vec<String> = page.items.into_iter().map(|item| item.id).collect();
+        assert_eq!(ids, vec!["g2", "g1", "g3"]);
+
+        // The scope still wins: g4 is hidden and never surfaces under Vault-shy
+        // sorts.
+        let vault = db::media_query(
+            &pool,
+            &FilterSpec {
+                scope: MediaScope::Vault,
+                sort: "addedDesc".into(),
+                ..spec()
+            },
+        )
+        .unwrap();
+        let vault_ids: Vec<String> = vault.items.into_iter().map(|item| item.id).collect();
+        assert_eq!(vault_ids, vec!["g4"]);
     }
 }

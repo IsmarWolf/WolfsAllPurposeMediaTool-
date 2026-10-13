@@ -83,6 +83,7 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
           aria-label={t('media.sort')}
         >
           <option value="capturedDesc">{t('media.sortDateDesc')}</option>
+          <option value="addedDesc">{t('media.sortAddedDesc')}</option>
           <option value="capturedAsc">{t('media.sortDateAsc')}</option>
           <option value="name">{t('media.sortName')}</option>
           <option value="size">{t('media.sortSize')}</option>

@@ -29,7 +29,8 @@ pub struct FilterSpec {
     pub search: Option<String>,
     /// `"image"` or `"video"`.
     pub file_type: Option<String>,
-    /// Sort order: `capturedDesc` | `capturedAsc` | `name` | `size`.
+    /// Sort order: `capturedDesc` | `capturedAsc` | `name` | `size` | `addedDesc`
+    /// (`addedDesc` = import time, newest first, v2 column `media.added_at`).
     pub sort: String,
     /// Page size (default 240, max 1000).
     pub limit: i64,
@@ -99,6 +100,17 @@ pub struct DeviceCountDto {
     pub name: String,
     pub count: i64,
     pub bytes: i64,
+}
+
+/// §7.2 `list_city_counts` — one tag-cloud node in the L2 `Localização` group
+/// (§10.6.1): a city and how many media sit in it, scoped like every read.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CityCountDto {
+    pub city: String,
+    /// ISO country code, when the location carried one — never a UI name.
+    pub country: Option<String>,
+    pub count: i64,
 }
 
 /// §8.1 `vault_status`. `unlocked` is a session flag owned by c18; c4 always

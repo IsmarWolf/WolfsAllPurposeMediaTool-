@@ -197,6 +197,13 @@ export interface MediaQueryDto {
   hasMore: boolean
 }
 
+/** §7.2 `list_city_counts` — one L2 `Localização` tag-cloud node (§10.6.1). */
+export interface CityCountDto {
+  city: string
+  country: string | null
+  count: number
+}
+
 /** `wolfs://toast` payload (§9.2). */
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'
 

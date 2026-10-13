@@ -63,6 +63,7 @@ pub fn run() {
             commands::media::scan_cancel,
             commands::media::geo_lookup,
             commands::media::media_query,
+            commands::media::city_counts,
             commands::media::media_detail,
             commands::media::media_reveal,
             commands::media::media_remove,

@@ -16,7 +16,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::core::db::{self, SqlitePool};
-use crate::core::models::{FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto};
+use crate::core::models::{
+    CityCountDto, FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto,
+};
 use crate::core::paths::PathResolver;
 use crate::core::scanner;
 use crate::core::thumbs;
@@ -229,6 +231,19 @@ pub async fn geo_lookup(
         })
 }
 
+/// §8.1 `city_counts` — the L2 `Localização` tag-cloud (§10.6.1): city + count,
+/// most populated first, scoped like every read so hidden rows only appear in
+/// Vault Mode. The scope is a parameter (as in `media_query`), never implicit.
+#[tauri::command]
+pub fn city_counts(
+    state: State<'_, AppState>,
+    scope: MediaScope,
+) -> Result<Vec<CityCountDto>, AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    Ok(db::city_counts(&pool, scope)?)
+}
+
 /// §8.1 `media_query` — one page of gallery results. The scope is always
 /// explicit (§6.6); the frontend never chooses it implicitly.
 #[tauri::command]
@@ -240,7 +255,6 @@ pub fn media_query(
     let pool = snapshot.require_pool()?;
     Ok(db::media_query(&pool, &spec)?)
 }
-
 /// §8.1 `media_detail` — one media item for the lightbox.
 #[tauri::command]
 pub fn media_detail(

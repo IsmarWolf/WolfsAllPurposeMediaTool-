@@ -1608,6 +1608,31 @@ video.md-lightbox__image {
   font-weight: 500;
 }
 
+.md-drawer__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.md-tagcloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.md-tagcloud__count {
+  margin-left: var(--space-xs);
+  font-size: var(--text-label-s);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.md-tagcloud__empty {
+  margin: 0;
+  color: var(--md-on-surface-variant);
+  font-size: var(--text-label-m);
+}
+
 .md-checkbox {
   display: flex;
   align-items: center;

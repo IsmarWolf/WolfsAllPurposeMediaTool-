@@ -1530,4 +1530,43 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
     fireEvent.click(screen.getByText('Limpar tudo'))
     expect(screen.queryByText(/Buscar: IMG/)).toBeNull()
   })
+
+  it('filters by city from the L2 tag-cloud and clears it with the chip (c14 follow-up)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      if (command === 'city_counts') {
+        return [
+          { city: 'São Paulo', country: 'BR', count: 42 },
+          { city: 'Lisboa', country: 'PT', count: 3 },
+        ]
+      }
+      return defaultMock(command, args)
+    })
+
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+
+    // The drawer promised a Localização tag-cloud (§10.6.1); it is a real scoped
+    // `city_counts` read, not a text box.
+    fireEvent.click(screen.getByRole('button', { name: 'Filtros' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Localização: São Paulo' }))
+
+    expect(await screen.findByText(/Localização: São Paulo/)).not.toBeNull()
+
+    const calls = invokeMock.mock.calls.filter(([command]) => command === 'media_query')
+    const last = calls[calls.length - 1][1] as { spec: { cities: string[] } }
+    expect(last.spec.cities).toEqual(['São Paulo'])
+    expect(
+      invokeMock.mock.calls.some(
+        ([command, args]) =>
+          command === 'city_counts' && (args as { scope: string }).scope === 'standard',
+      ),
+    ).toBe(true)
+
+    // The chip's ✕ removes just that city.
+    fireEvent.click(screen.getByRole('button', { name: 'Remover: Localização: São Paulo' }))
+    expect(screen.queryByText(/Localização: São Paulo/)).toBeNull()
+  })
 })
