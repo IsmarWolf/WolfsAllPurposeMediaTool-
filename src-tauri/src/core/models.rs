@@ -157,6 +157,71 @@ pub struct LocationDto {
     pub longitude: Option<f64>,
 }
 
+/// §7.1 `ListDto` — one row of the Lists page (§11.5).
+///
+/// `filter_criteria` is the single source of truth for the list's *kind*: `None`
+/// is a **manual** list (the user adds/removes any media), `Some(JSON)` is a
+/// **smart snapshot** list whose membership is a snapshot of a stored
+/// [`FilterSpec`] (§7.9). The JSON is the §22 flat spec, always normalized to
+/// `scope = standard` before it is stored, so a list can never capture hidden
+/// media (C6 — see §12.5.6).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDto {
+    pub id: String,
+    pub name: String,
+    pub filter_criteria: Option<serde_json::Value>,
+    pub created_at: String,
+    pub member_count: i64,
+}
+
+/// §7.1 `ListDetailDto` — a list plus its members, for the §11.5 right pane.
+///
+/// Flattened so the wire object is one `ListDto`'s fields plus `members`, not a
+/// nested `{ list: …, members: … }` the frontend would have to unwrap.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDetailDto {
+    #[serde(flatten)]
+    pub list: ListDto,
+    pub members: Vec<MediaDto>,
+}
+
+/// §8.1 `lists_create` payload — a new list starts **manual** (no criteria); a
+/// smart list is only born from `lists_snapshot_apply` (§12.4).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListCreateDto {
+    pub name: String,
+}
+
+/// §8.1 `lists_update` payload — rename only (c15 decision: criteria change
+/// through `lists_snapshot_apply`, so exactly one path owns them).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListUpdateDto {
+    pub id: String,
+    pub name: String,
+}
+
+/// §8.1 `lists_add_items` / `lists_remove_items` payload.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListItemsDto {
+    pub list_id: String,
+    pub media_ids: Vec<String>,
+}
+
+/// §8.1 `lists_snapshot_apply` payload: the **active** gallery filter and the
+/// target list. The spec is the same §22 object the gallery already sends
+/// (§12.4), so apply and the gallery cannot disagree.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListSnapshotApplyDto {
+    pub list_id: String,
+    pub spec: FilterSpec,
+}
+
 /// §7.1 `MediaDto` — one gallery row, and the §12.3 lightbox. The two thumbnail
 /// fields are both exposed even though §6.7 stores only the 400px one: the 200px
 /// path is derived from `thumb400` by the §4.1 folder convention, so the DTO
@@ -402,6 +467,41 @@ mod tests {
         assert!(json.contains("\"noMetadata\":7"), "{json}");
         assert!(json.contains("\"totalBytes\":12"), "{json}");
         assert!(json.contains("\"topDevices\":[]"), "{json}");
+    }
+
+    /// §7.1/c15: the list DTOs must ride the wire camelCased, and a detail is a
+    /// flattened list plus `members` (not a nested `list` object).
+    #[test]
+    fn list_dtos_are_camel_case_and_flattened() {
+        let list = ListDto {
+            id: "l1".into(),
+            name: "Viagem".into(),
+            filter_criteria: Some(serde_json::json!({ "scope": "standard" })),
+            created_at: "2026-10-15 10:00:00".into(),
+            member_count: 3,
+        };
+        let json = serde_json::to_string(&list).unwrap();
+        assert!(
+            json.contains(r#""filterCriteria":{"scope":"standard"}"#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""createdAt":"2026-10-15 10:00:00""#),
+            "{json}"
+        );
+        assert!(json.contains(r#""memberCount":3"#), "{json}");
+
+        let detail = ListDetailDto {
+            list,
+            members: Vec::new(),
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(json.contains(r#""id":"l1""#), "{json}");
+        assert!(json.contains(r#""members":[]"#), "{json}");
+        assert!(
+            !json.contains(r#""list":"#),
+            "the list must be flattened: {json}"
+        );
     }
 
     #[test]

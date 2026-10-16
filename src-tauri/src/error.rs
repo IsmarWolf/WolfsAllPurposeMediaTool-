@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::core::db::DbError;
 use crate::core::exif::ExifError;
 use crate::core::layout::LayoutError;
+use crate::core::lists::ListError;
 use crate::core::paths::PathError;
 
 #[derive(Debug, Error)]
@@ -92,6 +93,23 @@ impl From<ExifError> for AppError {
         match err {
             ExifError::Spawn(_) => AppError::Ffmpeg(err.to_string()),
             ExifError::Read { .. } => AppError::Ingest(err.to_string()),
+        }
+    }
+}
+
+/// §7.9/c15 — a failed list operation. A missing or wrong-kind list and an empty
+/// name are all user-visible conflicts (the UI shows the detail); a corrupt
+/// stored criteria also lands on `E_CONFLICT` because there is no other code for
+/// it and it is unreachable in practice (only this app writes that column).
+impl From<ListError> for AppError {
+    fn from(err: ListError) -> Self {
+        match err {
+            ListError::Db(error) => AppError::Db(error),
+            ListError::NotFound(_)
+            | ListError::SmartList
+            | ListError::ManualList
+            | ListError::EmptyName
+            | ListError::Criteria(_) => AppError::Conflict(err.to_string()),
         }
     }
 }

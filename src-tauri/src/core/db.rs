@@ -458,6 +458,286 @@ pub fn media_remove(pool: &SqlitePool, ids: &[String]) -> Result<usize, DbError>
     Ok(deleted)
 }
 
+/// §7.2/§7.9 — the raw `lists` row plus its **visible** member count.
+///
+/// Parsing the stored criteria into a `FilterSpec` is `core::lists`'s job: this
+/// module only executes SQL (§6.5, c14 decision 2), so the criteria travel as the
+/// JSON string the column actually holds.
+///
+/// `member_count` counts only currently-visible members (`is_hidden = 0`): a
+/// member hidden *after* it was added stops counting and stops appearing, so the
+/// vault can never be observed through a list (§12.5.6, C6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredList {
+    pub id: String,
+    pub name: String,
+    /// `None` ⇒ manual list; `Some(JSON)` ⇒ smart snapshot (§7.9).
+    pub criteria_json: Option<String>,
+    pub created_at: Option<String>,
+    pub member_count: i64,
+}
+
+/// The `StoredList` projection, shared by `lists_all` and `list_get` so the two
+/// can never disagree about what a member count means.
+const LIST_COLUMNS: &str = "l.id, l.name, l.filter_criteria, l.created_at, \
+    (SELECT COUNT(*) FROM list_items li JOIN media m ON m.id = li.media_id \
+     WHERE li.list_id = l.id AND m.is_hidden = 0)";
+
+fn stored_list_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredList> {
+    Ok(StoredList {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        criteria_json: row.get(2)?,
+        created_at: row.get(3)?,
+        member_count: row.get(4)?,
+    })
+}
+
+/// §7.9/§8.1 — every list, listed the way a sidebar wants them (A→Z, case-insensitive).
+pub fn lists_all(pool: &SqlitePool) -> Result<Vec<StoredList>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {LIST_COLUMNS} FROM lists l ORDER BY l.name COLLATE NOCASE ASC"
+    ))?;
+    let rows = stmt
+        .query_map([], stored_list_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// §7.9 — one list with its visible member count, or `None` when it is gone.
+pub fn list_get(pool: &SqlitePool, id: &str) -> Result<Option<StoredList>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {LIST_COLUMNS} FROM lists l WHERE l.id = ?1"
+    ))?;
+    let mut rows = stmt.query([id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(stored_list_from_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// §7.9 — insert a new (always manual) list; `created_at` is the DB clock.
+pub fn list_insert(pool: &SqlitePool, id: &str, name: &str) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    conn.execute(
+        "INSERT INTO lists (id, name, created_at) VALUES (?1, ?2, datetime('now'))",
+        rusqlite::params![id, name],
+    )?;
+    Ok(())
+}
+
+/// §7.9 — rename a list. `false` ⇒ no such list (the caller reports it).
+pub fn list_update_name(pool: &SqlitePool, id: &str, name: &str) -> Result<bool, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let changed = conn.execute(
+        "UPDATE lists SET name = ?2 WHERE id = ?1",
+        rusqlite::params![id, name],
+    )?;
+    Ok(changed > 0)
+}
+
+/// §7.9 — delete a list; `list_items` cascade (§6.1). `false` ⇒ nothing to delete.
+pub fn list_delete(pool: &SqlitePool, id: &str) -> Result<bool, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let changed = conn.execute("DELETE FROM lists WHERE id = ?1", [id])?;
+    Ok(changed > 0)
+}
+
+/// §7.9 — the members of a list, visible only (`is_hidden = 0`), newest capture
+/// first (the gallery's own default sort).
+pub fn list_members(pool: &SqlitePool, list_id: &str) -> Result<Vec<MediaDto>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
+                m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
+                l.city, l.state, l.country, l.latitude, l.longitude
+         FROM list_items li
+         JOIN media m ON m.id = li.media_id
+         LEFT JOIN locations l ON l.media_id = m.id
+         WHERE li.list_id = ?1 AND m.is_hidden = 0
+         ORDER BY m.captured_at DESC",
+    )?;
+    let items = stmt
+        .query_map([list_id], |row| {
+            let relative_path: String = row.get(1)?;
+            let thumb_400: String = row.get(2)?;
+            let thumb_200 = thumb_400.replacen("/400/", "/200/", 1);
+            Ok(MediaDto {
+                id: row.get(0)?,
+                relative_path,
+                thumb_200,
+                thumb_400,
+                file_hash: row.get(3)?,
+                file_size: row.get(4)?,
+                file_type: row.get(5)?,
+                captured_at: row.get(6)?,
+                has_metadata: row.get(7)?,
+                device_name: row.get(8)?,
+                is_hidden: row.get(9)?,
+                location: Some(LocationDto {
+                    city: row.get(10)?,
+                    state: row.get(11)?,
+                    country: row.get(12)?,
+                    latitude: row.get(13)?,
+                    longitude: row.get(14)?,
+                }),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
+/// Inserts membership rows, skipping ids that are hidden or do not exist.
+///
+/// The `is_hidden = 0` guard is C6 at the write side: even if a caller hands over
+/// a vault id, it can never become a list member (the read side filters again).
+fn insert_items(
+    tx: &rusqlite::Transaction<'_>,
+    list_id: &str,
+    ids: &[String],
+) -> Result<usize, DbError> {
+    let mut stmt = tx.prepare(
+        "INSERT OR IGNORE INTO list_items (list_id, media_id)
+         SELECT ?1, m.id FROM media m WHERE m.id = ?2 AND m.is_hidden = 0",
+    )?;
+    let mut changed = 0;
+    for id in ids {
+        changed += stmt.execute(rusqlite::params![list_id, id])?;
+    }
+    Ok(changed)
+}
+
+/// §7.9/§8.1 `lists_add_items` — manual lists only (the caller checks the kind).
+pub fn list_add_items(pool: &SqlitePool, list_id: &str, ids: &[String]) -> Result<usize, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let changed = insert_items(&tx, list_id, ids)?;
+    tx.commit()?;
+    Ok(changed)
+}
+
+/// §7.9/§8.1 `lists_remove_items` — removal is always allowed (visible or not).
+pub fn list_remove_items(
+    pool: &SqlitePool,
+    list_id: &str,
+    ids: &[String],
+) -> Result<usize, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let mut changed = 0;
+    {
+        let mut stmt = tx.prepare("DELETE FROM list_items WHERE list_id = ?1 AND media_id = ?2")?;
+        for id in ids {
+            changed += stmt.execute(rusqlite::params![list_id, id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
+/// §7.2 `snapshot_apply_transaction` — store the criteria **and** replace the
+/// membership in one transaction, so a list is never left with new criteria and
+/// old members (or the reverse). `false` ⇒ the list does not exist; the dropped
+/// transaction rolls back, so a missing list changes nothing.
+pub fn list_apply_snapshot(
+    pool: &SqlitePool,
+    list_id: &str,
+    criteria_json: &str,
+    ids: &[String],
+) -> Result<bool, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM lists WHERE id = ?1",
+        [list_id],
+        |row| row.get(0),
+    )?;
+    if exists == 0 {
+        return Ok(false);
+    }
+    tx.execute(
+        "UPDATE lists SET filter_criteria = ?2 WHERE id = ?1",
+        rusqlite::params![list_id, criteria_json],
+    )?;
+    tx.execute("DELETE FROM list_items WHERE list_id = ?1", [list_id])?;
+    insert_items(&tx, list_id, ids)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// §7.9 `snapshot_sync` — replace the membership in one transaction; the stored
+/// criteria are untouched (the caller re-ran them). `false` ⇒ no such list.
+///
+/// A pure snapshot's membership *is* the current match set, so "add matches,
+/// remove stale members" and "replace" are the same write; doing it as a replace
+/// keeps it one statement pair instead of a variably-sized `NOT IN`.
+pub fn list_replace_items(
+    pool: &SqlitePool,
+    list_id: &str,
+    ids: &[String],
+) -> Result<bool, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM lists WHERE id = ?1",
+        [list_id],
+        |row| row.get(0),
+    )?;
+    if exists == 0 {
+        return Ok(false);
+    }
+    tx.execute("DELETE FROM list_items WHERE list_id = ?1", [list_id])?;
+    insert_items(&tx, list_id, ids)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// §7.9 — every `media.id` a spec matches, **uncapped**: no `LIMIT`/`OFFSET`, so
+/// a snapshot is the whole match set and never the gallery's first page. Runs the
+/// same [`crate::core::filters::build`] body `media_query` does, so the two can
+/// never disagree about what a filter means (c14 decision 2).
+pub fn media_ids_matching(pool: &SqlitePool, spec: &FilterSpec) -> Result<Vec<String>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let filter = crate::core::filters::build(spec);
+    let mut stmt = conn.prepare(&format!(
+        "SELECT m.id FROM media m LEFT JOIN locations l ON l.media_id = m.id \
+         WHERE {} ORDER BY {}",
+        filter.where_sql(),
+        filter.order
+    ))?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params_from_iter(filter.params.iter().map(|p| p.as_ref())),
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// §7.2 `vacuum(pool)`: `VACUUM` rewrites the whole file, so it must never run
 /// inside a transaction and must not hold a borrowed connection.
 pub fn vacuum(pool: &SqlitePool) -> Result<(), DbError> {

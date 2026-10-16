@@ -3,6 +3,7 @@ pub mod exif;
 pub mod filters;
 pub mod geocode;
 pub mod layout;
+pub mod lists;
 pub mod models;
 pub mod paths;
 pub mod placement;
