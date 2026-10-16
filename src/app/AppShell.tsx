@@ -60,9 +60,14 @@ function ShellBody() {
   const setDrawerOpen = useCallback((open: boolean) => setDrawer({ route, open }), [route])
   const closeDrawer = useCallback(() => setDrawerOpen(false), [setDrawerOpen])
 
+  // Only the shell-scoped bindings live here. `Esc` closes the inspector drawer
+  // or clears the selection, both of which are shell state; `Ctrl/Cmd+A` is
+  // deliberately NOT here even though §12.6 lists it — "select all in the
+  // current spec" needs the media page's own items, so it belongs to the surface
+  // that owns them (`MediaScreen`), not to the chrome. (It used to clear the
+  // selection, which was the opposite of the map.)
   const shortcuts = useMemo<Shortcut[]>(
     () => [
-      { key: 'a', ctrl: true, run: () => selection.clear() },
       {
         key: 'escape',
         run: () => {

@@ -1,4 +1,11 @@
-import { useRef, useCallback, useEffect, useState } from 'react'
+import {
+  useRef,
+  useCallback,
+  useEffect,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useI18n } from '../../hooks/useContexts'
 import { useSelection } from '../../hooks/useSelection'
@@ -37,8 +44,13 @@ const THUMB_RETRY_MS = 1500
  * Above 1,000 items only the viewport is rendered (`@tanstack/react-virtual`
  * windows the rows); below that the grid renders every tile. Each tile shows
  * the 200px WebP immediately and upgrades to 400px on hover (§10.6.5 LQIP).
- * The overlay has a checkbox (top-left) and a fav star (top-right); the body
- * click opens the lightbox.
+ * The overlay has a checkbox (top-left) and a fav star (top-right).
+ *
+ * Windows-Explorer interaction model (human-confirmed 2026-10-15, §12.6):
+ * single click selects, double click opens the lightbox, Ctrl/Cmd+click toggles
+ * membership without opening, Shift+click ranges from the anchor, arrow keys
+ * walk a keyboard cursor over the tiles (Shift+arrows extend), Space toggles
+ * the focused tile and Enter opens it.
  */
 export function MediaGrid({
   items,
@@ -46,40 +58,31 @@ export function MediaGrid({
   onOpen,
   selectionMode,
   selection,
+  navEnabled,
 }: {
   items: MediaDto[]
   root: string | null
   onOpen: (id: string) => void
   selectionMode: boolean
   selection: ReturnType<typeof useSelection>
+  /** False while the lightbox is up: `←/→` then belong to the overlay, not the grid. */
+  navEnabled: boolean
 }) {
-  const { selected, toggle } = selection
-
-  const handleBodyClick = useCallback(
-    (id: string) => {
-      if (selectionMode) {
-        toggle(id)
-      } else {
-        onOpen(id)
-      }
-    },
-    [selectionMode, toggle, onOpen],
-  )
+  const { selected } = selection
+  const handleClick = useTileClick({ items, selectionMode, selection })
 
   if (items.length <= VIRTUALIZE_ABOVE) {
     return (
-      <div className="media-grid" data-testid="media-grid">
-        {items.map((item) => (
-          <MediaTile
-            key={item.id}
-            item={item}
-            root={root}
-            selected={selected.has(item.id)}
-            onClick={() => handleBodyClick(item.id)}
-            onToggle={() => toggle(item.id)}
-          />
-        ))}
-      </div>
+      <PlainGrid
+        items={items}
+        root={root}
+        onOpen={onOpen}
+        selected={selected}
+        handleClick={handleClick}
+        onToggle={selection.toggle}
+        selection={selection}
+        navEnabled={navEnabled}
+      />
     )
   }
 
@@ -88,33 +91,275 @@ export function MediaGrid({
       items={items}
       root={root}
       onOpen={onOpen}
-      selectionMode={selectionMode}
+      selected={selected}
+      handleClick={handleClick}
+      onToggle={selection.toggle}
       selection={selection}
+      navEnabled={navEnabled}
     />
   )
+}
+
+/** The Explorer click map, shared by both grid variants. */
+function useTileClick({
+  items,
+  selectionMode,
+  selection,
+}: {
+  items: MediaDto[]
+  selectionMode: boolean
+  selection: ReturnType<typeof useSelection>
+}) {
+  const { toggle, selectOne, selectRange } = selection
+  return useCallback(
+    (index: number, event: ReactMouseEvent) => {
+      const id = items[index]?.id
+      if (!id) return
+      if (event.ctrlKey || event.metaKey) {
+        toggle(id)
+        return
+      }
+      if (event.shiftKey) {
+        const anchorIndex = selection.anchor
+          ? items.findIndex((item) => item.id === selection.anchor)
+          : -1
+        if (anchorIndex < 0) {
+          selectOne(id)
+          return
+        }
+        const [from, to] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex]
+        selectRange(items.slice(from, to + 1).map((item) => item.id))
+        return
+      }
+      if (selectionMode) {
+        toggle(id)
+      } else {
+        selectOne(id)
+      }
+    },
+    [items, selectionMode, selection.anchor, toggle, selectOne, selectRange],
+  )
+}
+
+/**
+ * Where an arrow lands, Windows-Explorer row semantics: `←/→` step one tile,
+ * `↑/↓` step one row of `columns`. Clamped at the edges (never wraps, never
+ * dead), `null` for a non-arrow key or an empty page.
+ */
+function arrowTarget(current: number, key: string, columns: number, length: number): number | null {
+  if (length === 0) {
+    return null
+  }
+  const cols = Math.max(1, columns)
+  let next: number
+  switch (key) {
+    case 'ArrowLeft':
+      next = current - 1
+      break
+    case 'ArrowRight':
+      next = current + 1
+      break
+    case 'ArrowUp':
+      next = current - cols
+      break
+    case 'ArrowDown':
+      next = current + cols
+      break
+    default:
+      return null
+  }
+  return Math.min(Math.max(next, 0), length - 1)
+}
+
+/**
+ * The keyboard cursor. Reads the focused tile when it is inside `containerRef`,
+ * else falls back to the anchor (so `←/→` work right after a click, before any
+ * tile has real DOM focus). Moves the selection the Explorer way — plain arrow
+ * replaces it, Shift+arrow extends from the anchor — and asks the grid to put
+ * DOM focus on the landed tile on the next frame (the virtual grid may still
+ * have to render that row).
+ */
+function useKeyboardNav({
+  items,
+  columns,
+  selection,
+  navEnabled,
+}: {
+  items: MediaDto[]
+  /** Column count resolution, given the grid container (measured when non-virtual). */
+  columns: (container: HTMLElement | null) => number
+  selection: ReturnType<typeof useSelection>
+  navEnabled: boolean
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [pendingFocus, setPendingFocus] = useState<number | null>(null)
+  const { selectOne, selectRange, setAnchor } = selection
+
+  useEffect(() => {
+    if (pendingFocus === null) {
+      return
+    }
+    let frame = 0
+    let raf: number | null = null
+    const attempt = () => {
+      const tile = containerRef.current?.querySelector<HTMLElement>(
+        `[data-index="${pendingFocus}"]`,
+      )
+      if (tile) {
+        tile.focus({ preventScroll: true })
+        // jsdom has no `scrollIntoView`; the optional call keeps the tests honest.
+        tile.scrollIntoView?.({ block: 'nearest' })
+        setPendingFocus(null)
+        return
+      }
+      // The virtual grid scrolled; give React a few frames to render the row.
+      if (frame++ < 5 && typeof requestAnimationFrame === 'function') {
+        raf = requestAnimationFrame(attempt)
+      } else {
+        setPendingFocus(null)
+      }
+    }
+    // A plain grid (and every test) has the tile already; only the virtual one waits.
+    attempt()
+    return () => {
+      if (raf !== null) {
+        cancelAnimationFrame(raf)
+      }
+    }
+  }, [pendingFocus])
+
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      if (!navEnabled || !event.key.startsWith('Arrow') || items.length === 0) {
+        return
+      }
+      const active = document.activeElement as HTMLElement | null
+      const focused = active?.closest<HTMLElement>('[data-index]')
+      const anchorIndex = selection.anchor
+        ? items.findIndex((item) => item.id === selection.anchor)
+        : -1
+      const from = focused ? Number(focused.dataset.index) : anchorIndex
+      const start = from >= 0 ? from : 0
+      const to = arrowTarget(start, event.key, columns(containerRef.current), items.length)
+      if (to === null) {
+        return
+      }
+      event.preventDefault()
+      if (event.shiftKey) {
+        const origin = anchorIndex >= 0 ? anchorIndex : start
+        const [a, b] = origin <= to ? [origin, to] : [to, origin]
+        selectRange(items.slice(a, b + 1).map((item) => item.id))
+        if (anchorIndex < 0) {
+          setAnchor(items[origin].id)
+        }
+      } else {
+        selectOne(items[to].id)
+      }
+      setPendingFocus(to)
+    },
+    [navEnabled, items, columns, selection.anchor, selectOne, selectRange, setAnchor],
+  )
+
+  return { containerRef, onKeyDown, pendingFocus }
+}
+
+/** Below the virtualize threshold: every tile is rendered, so columns are measurable. */
+function PlainGrid({
+  items,
+  root,
+  onOpen,
+  selected,
+  handleClick,
+  onToggle,
+  selection,
+  navEnabled,
+}: {
+  items: MediaDto[]
+  root: string | null
+  onOpen: (id: string) => void
+  selected: ReadonlySet<string>
+  handleClick: (index: number, event: ReactMouseEvent) => void
+  onToggle: (id: string) => void
+  selection: ReturnType<typeof useSelection>
+  navEnabled: boolean
+}) {
+  const { containerRef, onKeyDown } = useKeyboardNav({
+    items,
+    columns: measureColumns,
+    selection,
+    navEnabled,
+  })
+
+  return (
+    <div ref={containerRef} className="media-grid" data-testid="media-grid" onKeyDown={onKeyDown}>
+      {items.map((item, index) => (
+        <MediaTile
+          key={item.id}
+          item={item}
+          index={index}
+          root={root}
+          selected={selected.has(item.id)}
+          onClick={(event) => handleClick(index, event)}
+          onOpen={() => onOpen(item.id)}
+          onToggle={() => onToggle(item.id)}
+        />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * `grid-template-columns` is the authoritative column count (an auto-fill grid
+ * can change it with the window); the tile-position fallback covers engines
+ * that report no computed track list. `1` is the safe floor.
+ */
+function measureColumns(container: HTMLElement | null): number {
+  if (!container) {
+    return 1
+  }
+  const tracks = getComputedStyle(container).gridTemplateColumns.split(' ').filter(Boolean)
+  if (tracks.length > 0) {
+    return tracks.length
+  }
+  const tiles = Array.from(container.querySelectorAll<HTMLElement>('[data-index]'))
+  if (tiles.length === 0) {
+    return 1
+  }
+  const firstTop = tiles[0].offsetTop
+  return Math.max(1, tiles.filter((tile) => tile.offsetTop === firstTop).length)
 }
 
 function VirtualGrid({
   items,
   root,
   onOpen,
-  selectionMode,
+  selected,
+  handleClick,
+  onToggle,
   selection,
+  navEnabled,
 }: {
   items: MediaDto[]
   root: string | null
   onOpen: (id: string) => void
-  selectionMode: boolean
+  selected: ReadonlySet<string>
+  handleClick: (index: number, event: ReactMouseEvent) => void
+  onToggle: (id: string) => void
   selection: ReturnType<typeof useSelection>
+  navEnabled: boolean
 }) {
-  const { selected, toggle } = selection
-  const parentRef = useRef<HTMLDivElement>(null)
+  const { containerRef, onKeyDown, pendingFocus } = useKeyboardNav({
+    items,
+    columns: () => VIRTUAL_COLUMNS,
+    selection,
+    navEnabled,
+  })
   const [width, setWidth] = useState(0)
 
   // The row height follows the column width: the tile is a square image plus a
   // fixed info strip, so a hardcoded 220px would clip on a wide window.
   useEffect(() => {
-    const element = parentRef.current
+    const element = containerRef.current
     if (!element) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) setWidth(entry.contentRect.width)
@@ -122,7 +367,7 @@ function VirtualGrid({
     observer.observe(element)
     setWidth(element.clientWidth)
     return () => observer.disconnect()
-  }, [])
+  }, [containerRef])
 
   const tileWidth = (width - GAP * (VIRTUAL_COLUMNS - 1)) / VIRTUAL_COLUMNS
   const rowHeight = (tileWidth > 0 ? tileWidth : ROW_HEIGHT - GAP) + INFO_HEIGHT
@@ -131,24 +376,27 @@ function VirtualGrid({
 
   const virtualizer = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => containerRef.current,
     estimateSize: () => rowHeight + GAP,
     overscan: 3,
   })
 
-  const handleBodyClick = useCallback(
-    (id: string) => {
-      if (selectionMode) {
-        toggle(id)
-      } else {
-        onOpen(id)
-      }
-    },
-    [selectionMode, toggle, onOpen],
-  )
+  // An arrow can land on a row that is not rendered; scroll it in first so the
+  // hook's focus attempt (next frame) finds the tile.
+  useEffect(() => {
+    if (pendingFocus === null) {
+      return
+    }
+    virtualizer.scrollToIndex(Math.floor(pendingFocus / VIRTUAL_COLUMNS), { align: 'auto' })
+  }, [pendingFocus, virtualizer])
 
   return (
-    <div ref={parentRef} className="media-grid__virtual" data-testid="media-grid">
+    <div
+      ref={containerRef}
+      className="media-grid__virtual"
+      data-testid="media-grid"
+      onKeyDown={onKeyDown}
+    >
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
@@ -174,16 +422,21 @@ function VirtualGrid({
                 gap: `${GAP}px`,
               }}
             >
-              {rowItems.map((item) => (
-                <MediaTile
-                  key={item.id}
-                  item={item}
-                  root={root}
-                  selected={selected.has(item.id)}
-                  onClick={() => handleBodyClick(item.id)}
-                  onToggle={() => toggle(item.id)}
-                />
-              ))}
+              {rowItems.map((item, offset) => {
+                const index = start + offset
+                return (
+                  <MediaTile
+                    key={item.id}
+                    item={item}
+                    index={index}
+                    root={root}
+                    selected={selected.has(item.id)}
+                    onClick={(event) => handleClick(index, event)}
+                    onOpen={() => onOpen(item.id)}
+                    onToggle={() => onToggle(item.id)}
+                  />
+                )
+              })}
             </div>
           )
         })}
@@ -194,15 +447,19 @@ function VirtualGrid({
 
 function MediaTile({
   item,
+  index,
   root,
   selected,
   onClick,
+  onOpen,
   onToggle,
 }: {
   item: MediaDto
+  index: number
   root: string | null
   selected: boolean
-  onClick: () => void
+  onClick: (event: ReactMouseEvent) => void
+  onOpen: () => void
   onToggle: () => void
 }) {
   const { t } = useI18n()
@@ -216,11 +473,18 @@ function MediaTile({
     <article
       className={`media-tile${selected ? ' media-tile--selected' : ''}`}
       data-testid="media-tile"
+      data-index={index}
       onClick={onClick}
+      onDoubleClick={onOpen}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        // Explorer keyboard on a tile: Enter opens, Space toggles it (which the
+        // window-level Space binding then leaves alone through its I-beam guard).
+        if (e.key === 'Enter') {
           e.preventDefault()
-          onClick()
+          onOpen()
+        } else if (e.key === ' ') {
+          e.preventDefault()
+          onToggle()
         }
       }}
       onMouseEnter={() => setHovered(true)}

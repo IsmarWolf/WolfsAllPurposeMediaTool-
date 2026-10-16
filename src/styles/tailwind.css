@@ -31,9 +31,13 @@
     outline-offset: var(--focus-ring-offset);
   }
 
+  /* 2026-10-15 (human): was `--md-secondary-ctr` (232 222 248), which is
+     nearly identical to the field fill `--md-surface-ctr-low` (231 224 236) —
+     text selected in an input looked unselected. Primary/on-primary is
+     unmistakable on every surface this app paints. */
   ::selection {
-    background-color: rgb(var(--md-secondary-ctr-rgb));
-    color: rgb(var(--md-on-secondary-ctr-rgb));
+    background-color: rgb(var(--md-primary-rgb));
+    color: rgb(var(--md-on-primary-rgb));
   }
 }
 

@@ -1408,7 +1408,7 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
     })
   })
 
-  it('opens the lightbox on tile click and closes it on Esc', async () => {
+  it('opens the lightbox on tile double click and closes it on Esc', async () => {
     invokeMock.mockImplementation(async (command: string, args?: unknown) => {
       if (command === 'media_query') {
         return MEDIA_PAGE
@@ -1418,7 +1418,7 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
 
     await openMedia()
     const tiles = await screen.findAllByTestId('media-tile')
-    fireEvent.click(tiles[0])
+    fireEvent.doubleClick(tiles[0])
 
     const dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
     expect(within(dialog).getByText('IMG_1.jpg')).not.toBeNull()
@@ -1501,7 +1501,7 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
     })
 
     await openMedia()
-    fireEvent.click(await screen.findByTestId('media-tile'))
+    fireEvent.doubleClick(await screen.findByTestId('media-tile'))
 
     const dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
     await waitFor(() => {
@@ -1568,5 +1568,186 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
     // The chip's ✕ removes just that city.
     fireEvent.click(screen.getByRole('button', { name: 'Remover: Localização: São Paulo' }))
     expect(screen.queryByText(/Localização: São Paulo/)).toBeNull()
+  })
+
+  /** Every gallery-shortcut test needs the two-item page. */
+  function withPage() {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      if (command === 'media_detail') {
+        const id = (args as { id: string }).id
+        return MEDIA_PAGE.items.find((item) => item.id === id) ?? null
+      }
+      return defaultMock(command, args)
+    })
+  }
+
+  // §12.6: "Ctrl/Cmd+A → select all in the current spec", and the Windows
+  // Explorer toggle the human asked for (2026-10-15): pressing it again clears.
+  it('Ctrl/Cmd+A selects the whole page, and again clears it (c14 §12.6)', async () => {
+    withPage()
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'a', ctrlKey: true })
+    })
+
+    let tiles = screen.getAllByTestId('media-tile')
+    expect(tiles.every((tile) => tile.getAttribute('aria-pressed') === 'true')).toBe(true)
+    expect(await screen.findByText('2 selecionados')).not.toBeNull()
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'a', ctrlKey: true })
+    })
+
+    tiles = screen.getAllByTestId('media-tile')
+    expect(tiles.every((tile) => tile.getAttribute('aria-pressed') === 'false')).toBe(true)
+    expect(screen.queryByText('2 selecionados')).toBeNull()
+  })
+
+  // The I-beam guard is the hook's, tested through the binding that would
+  // otherwise steal the caret's own Ctrl+A.
+  it('leaves Ctrl+A to the search field while it has the caret (§12.6)', async () => {
+    withPage()
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'a', ctrlKey: true })
+
+    expect(document.querySelector('.zone5')).toBeNull()
+  })
+
+  // The Explorer click map (human 2026-10-15, §12.6): click selects, double
+  // click opens, Ctrl+click toggles without opening, Shift+click ranges.
+  it('selects on click, opens on double click, Ctrl+click and Shift+click (c14 §12.6)', async () => {
+    withPage()
+    await openMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+
+    fireEvent.click(tiles[0])
+    expect(tiles[0].getAttribute('aria-pressed')).toBe('true')
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('false')
+    // A single click must NOT open the lightbox any more.
+    expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+
+    fireEvent.doubleClick(tiles[0])
+    expect(await screen.findByRole('dialog', { name: 'Visualização de mídia' })).not.toBeNull()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull(),
+    )
+
+    // Ctrl+click adds without opening…
+    fireEvent.click(tiles[1], { ctrlKey: true })
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+    // …and Ctrl+click again removes.
+    fireEvent.click(tiles[1], { ctrlKey: true })
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('false')
+
+    // Shift+click ranges from the anchor. Ctrl+click above moved the anchor to
+    // g2, so re-click g1 first (a plain click is select-and-anchor).
+    fireEvent.click(tiles[0])
+    fireEvent.click(tiles[1], { shiftKey: true })
+    expect(tiles[0].getAttribute('aria-pressed')).toBe('true')
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('true')
+    expect(await screen.findByText('2 selecionados')).not.toBeNull()
+  })
+
+  // Explorer's keyboard cursor: arrows replace the selection, Shift+arrows extend.
+  it('walks the selection with arrow keys while the lightbox is closed (c14 §12.6)', async () => {
+    withPage()
+    await openMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+
+    // Anchor g1, then step right: selection follows the cursor.
+    fireEvent.click(tiles[0])
+    fireEvent.keyDown(tiles[0], { key: 'ArrowRight' })
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('true')
+    expect(tiles[0].getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+
+    // Anchor is g2 now; Shift+ArrowLeft extends back over g1.
+    fireEvent.keyDown(tiles[1], { key: 'ArrowLeft', shiftKey: true })
+    expect(tiles[0].getAttribute('aria-pressed')).toBe('true')
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('true')
+  })
+
+  // §12.6: "Space → quick-look" was replaced (human 2026-10-15) by the Explorer
+  // toggle of the focused tile; Enter is the open key.
+  it('Space toggles the focused tile and Enter opens it (c14 §12.6)', async () => {
+    withPage()
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+
+    const tile = screen.getAllByTestId('media-tile')[0]
+    tile.focus()
+    fireEvent.keyDown(tile, { key: ' ' })
+
+    expect(tile.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull()
+
+    tile.focus()
+    fireEvent.keyDown(tile, { key: 'Enter' })
+    expect(await screen.findByRole('dialog', { name: 'Visualização de mídia' })).not.toBeNull()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Visualização de mídia' })).toBeNull(),
+    )
+  })
+
+  // §11.4's keyboard: `←/→` navigate. Both keys and the visible arrow row have to
+  // move together, and the row has to leave at the ends rather than dangle.
+  it('navigates the lightbox with ←/→ and with its arrows (c14 §11.4)', async () => {
+    withPage()
+    await openMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.doubleClick(tiles[0])
+
+    let dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(within(dialog).getByText('IMG_1.jpg')).not.toBeNull()
+    // First of two: nowhere back to go, so the control is absent.
+    expect(within(dialog).queryByRole('button', { name: 'Anterior' })).toBeNull()
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'ArrowRight' })
+    })
+    dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(within(dialog).getByText('VID_2.mov')).not.toBeNull()
+    // Last of two: forward is the one that leaves.
+    expect(within(dialog).queryByRole('button', { name: 'Próxima' })).toBeNull()
+    // With the overlay up, `←/→` belong to it: the grid selection is untouched.
+    expect(tiles[1].getAttribute('aria-pressed')).toBe('false')
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    })
+    dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(within(dialog).getByText('IMG_1.jpg')).not.toBeNull()
+
+    // And the visible arrows do the same as the keys.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Próxima' }))
+    dialog = await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(within(dialog).getByText('VID_2.mov')).not.toBeNull()
+  })
+
+  // Esc must close this screen's own overlays; the filter drawer has no other way
+  // out besides its backdrop and its Fechar button.
+  it('Esc closes the L2 filter drawer (c14 §10.6.5)', async () => {
+    withPage()
+    await openMedia()
+    await screen.findAllByTestId('media-tile')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filtros' }))
+    expect(await screen.findByRole('dialog', { name: 'Filtros' })).not.toBeNull()
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' })
+    })
+    expect(screen.queryByRole('dialog', { name: 'Filtros' })).toBeNull()
   })
 })

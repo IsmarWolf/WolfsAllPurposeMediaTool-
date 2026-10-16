@@ -11,7 +11,10 @@ import { mediaUrl, thumbUrl } from './assetUrl'
  * §11.4 `MediaLightbox` — the media detail overlay.
  *
  * Shows the 400px preview, filename, metadata table, and location. Keyboard:
- * `Esc` close, `←/→` navigate (placeholder for now — single-item only).
+ * `Esc` close, `←/→` navigate. The arrows are the visible half of that map
+ * (`[C-4e]/[C-4g]`); the keys are bound by `MediaScreen`, which owns the page
+ * order. `onPrev`/`onNext` are absent at the ends of the page, so the control
+ * disappears rather than becoming a dead button.
  *
  * c13 fix (human-approved 2026-10-05): a video renders as a real `<video>`
  * player, fed from its `Media/` file — which requires the per-file scope grant
@@ -25,10 +28,14 @@ export function MediaLightbox({
   id,
   root,
   onClose,
+  onPrev,
+  onNext,
 }: {
   id: string
   root: string | null
   onClose: () => void
+  onPrev?: () => void
+  onNext?: () => void
 }) {
   const { t } = useI18n()
   const { pushError } = useToast()
@@ -152,7 +159,31 @@ export function MediaLightbox({
           )}
         </div>
         <div className="md-lightbox__panel">
-          <h2 className="md-lightbox__title">{data.relativePath.split('/').pop()}</h2>
+          {/* [C-4e]/[C-4g] — the arrow row of §11.4. Each control only exists
+              while there is somewhere to go, so neither is ever a no-op. */}
+          <div className="md-lightbox__nav">
+            {onPrev ? (
+              <button
+                type="button"
+                className="md-btn md-btn--text"
+                aria-label={t('media.prev')}
+                onClick={onPrev}
+              >
+                ←
+              </button>
+            ) : null}
+            <h2 className="md-lightbox__title">{data.relativePath.split('/').pop()}</h2>
+            {onNext ? (
+              <button
+                type="button"
+                className="md-btn md-btn--text"
+                aria-label={t('media.next')}
+                onClick={onNext}
+              >
+                →
+              </button>
+            ) : null}
+          </div>
           <dl className="kv">
             <dt>{t('media.fileType')}</dt>
             <dd>{data.fileType}</dd>

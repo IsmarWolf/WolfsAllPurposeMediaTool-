@@ -1542,7 +1542,17 @@ video.md-lightbox__image {
   overflow-y: auto;
 }
 
+/* The [C-4e]/[C-4g] arrow row: arrows hug the ends, the filename takes the
+   middle and may wrap under itself (`overflow-wrap: anywhere` on the title). */
+.md-lightbox__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .md-lightbox__title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: var(--text-title-l);
   font-weight: 500;

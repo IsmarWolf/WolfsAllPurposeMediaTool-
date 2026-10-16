@@ -112,6 +112,8 @@
   "media.location": "Location",
   "media.openFolder": "Open folder",
   "media.lightbox": "Media viewer",
+  "media.prev": "Previous",
+  "media.next": "Next",
   "media.select": "Select",
   "media.favorite": "Favorite",
   "common.remove": "Remove",

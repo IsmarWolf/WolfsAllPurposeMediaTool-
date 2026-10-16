@@ -112,6 +112,8 @@
   "media.location": "Localização",
   "media.openFolder": "Abrir pasta",
   "media.lightbox": "Visualização de mídia",
+  "media.prev": "Anterior",
+  "media.next": "Próxima",
   "media.select": "Selecionar",
   "media.favorite": "Favoritar",
   "common.remove": "Remover",

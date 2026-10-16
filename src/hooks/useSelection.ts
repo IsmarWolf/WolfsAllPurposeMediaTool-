@@ -28,21 +28,39 @@ export function useSelection() {
 
   /**
    * Range selection over the *filtered + sorted* order (§12.6), so chips and
-   * ordering stay authoritative. The cap is the §10.6.5 performance guard.
+   * ordering stay authoritative. REPLACE semantics (human 2026-10-15): the
+   * selection becomes exactly the anchor→cursor range, the way Shift+arrow
+   * behaves in Windows Explorer — a union would only ever grow. The cap is the
+   * §10.6.5 performance guard.
    */
   const selectRange = useCallback((ids: readonly string[]) => {
-    setSelected((current) => {
-      const next = new Set(current)
-      for (const id of ids.slice(0, SELECT_ALL_CAP)) {
-        next.add(id)
-      }
-      return next
-    })
-  }, [])
-
-  const selectAll = useCallback((ids: readonly string[]) => {
     setSelected(new Set(ids.slice(0, SELECT_ALL_CAP)))
   }, [])
+
+  /** Single-select with anchor move — a plain click / plain arrow step. */
+  const selectOne = useCallback((id: string) => {
+    setSelected(new Set([id]))
+    setAnchor(id)
+  }, [])
+
+  /**
+   * §12.6 Ctrl/Cmd+A, with the Windows Explorer toggle the human asked for
+   * (2026-10-15): every page item already selected → clear, else select all.
+   * The comparison uses the *capped* set, so a page over the 1 000 cap still
+   * toggles (the excess was never selected in the first place).
+   */
+  const selectAll = useCallback(
+    (ids: readonly string[]) => {
+      const page = ids.slice(0, SELECT_ALL_CAP)
+      const all = page.length > 0 && page.every((id) => selected.has(id))
+      if (all) {
+        clear()
+      } else {
+        setSelected(new Set(page))
+      }
+    },
+    [selected, clear],
+  )
 
   return useMemo(
     () => ({
@@ -52,10 +70,11 @@ export function useSelection() {
       setAnchor,
       toggle,
       selectRange,
+      selectOne,
       selectAll,
       clear,
     }),
-    [selected, anchor, toggle, selectRange, selectAll, clear],
+    [selected, anchor, toggle, selectRange, selectOne, selectAll, clear],
   )
 }
 
