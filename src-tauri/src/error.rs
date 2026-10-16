@@ -13,6 +13,7 @@ use crate::core::exif::ExifError;
 use crate::core::layout::LayoutError;
 use crate::core::lists::ListError;
 use crate::core::paths::PathError;
+use crate::core::vault::VaultError;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -110,6 +111,26 @@ impl From<ListError> for AppError {
             | ListError::ManualList
             | ListError::EmptyName
             | ListError::Criteria(_) => AppError::Conflict(err.to_string()),
+        }
+    }
+}
+
+/// §7.10/c17 — the vault. Only three outcomes are `E_AUTH` (the §12.5 gate shows
+/// them inline): a wrong password, a wrong recovery key, and using the vault while
+/// it is locked. An unconfigured or already-configured vault, a weak password and
+/// a move/integrity failure are all `E_CONFLICT` — the UI surfaces them with
+/// detail, and a `Db`/`Root` failure keeps its own code.
+impl From<VaultError> for AppError {
+    fn from(err: VaultError) -> Self {
+        match err {
+            VaultError::Db(error) => AppError::Db(error),
+            VaultError::Path(error) => AppError::Root(error),
+            VaultError::WrongPassword => AppError::Auth(VaultError::WrongPassword.to_string()),
+            VaultError::WrongRecoveryKey => {
+                AppError::Auth(VaultError::WrongRecoveryKey.to_string())
+            }
+            VaultError::Locked => AppError::Auth(VaultError::Locked.to_string()),
+            other => AppError::Conflict(other.to_string()),
         }
     }
 }

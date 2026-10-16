@@ -6,12 +6,13 @@
 //! The five tables of §6.1 are created verbatim (with `IF NOT EXISTS`, so
 //! `apply_schema` is safe on every boot), followed by the §6.3 indexes and the
 //! §14 `process_log` diagnostics table. `PRAGMA user_version` gates migrations
-//! (§6.4); v1 → v2 adds `media.added_at` (the import timestamp).
-//! v0 → v1 was the first build.
+//! (§6.4); v1 → v2 adds `media.added_at` (the import timestamp) and v2 → v3 adds
+//! `media.restore_path` (c17, §12.5: the `Media/...` location a hidden item
+//! returns to on unhide). v0 → v1 was the first build.
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -23,8 +24,9 @@ use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
 
-/// §6.4: "Migration v1 -> v2 is current" — v2 adds `media.added_at`.
-pub const SCHEMA_VERSION: i64 = 2;
+/// §6.4: "Migration v2 -> v3 is current" — v2 added `media.added_at`, v3 adds
+/// `media.restore_path` (c17, §12.5).
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// §6.2: max 3 connections — WAL allows concurrent readers + one writer, and the
 /// background scanner (c6) takes at most one.
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS media (
     added_at        DATETIME,                    -- import timestamp, NULL for v1 rows
     has_metadata    BOOLEAN DEFAULT 1,
     is_hidden       BOOLEAN DEFAULT 0,
+    restore_path    TEXT,                        -- c17: Media/... path to return to on unhide (NULL while visible)
     device_name     TEXT
 );
 
@@ -176,8 +179,8 @@ pub fn open(resolver: &PathResolver) -> Result<SqlitePool, DbError> {
 ///
 /// One transaction: a failure leaves the DB untouched (§6.4). A fresh database
 /// has `user_version` 0 — `VERBATIM_SCHEMA` already carries the newest shape, so
-/// it is stamped directly. An existing v1 database gets `media.added_at` via
-/// `ALTER TABLE` before the stamp.
+/// it is stamped directly. An existing v1 database gets `media.added_at` and
+/// `media.restore_path` via `ALTER TABLE`; a v2 database gets `restore_path`.
 pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     let tx = conn.transaction()?;
     tx.execute_batch(VERBATIM_SCHEMA)?;
@@ -185,10 +188,15 @@ pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     tx.execute_batch(PROCESS_LOG_SCHEMA)?;
     tx.execute_batch(THUMB_META_SCHEMA)?;
 
-    // Migration ladder (§6.4): v1 -> v2 adds media.added_at.
+    // Migration ladder (§6.4): v1 -> v2 adds media.added_at, v2 -> v3 adds
+    // media.restore_path (c17). A fresh v0 database carries both in
+    // VERBATIM_SCHEMA, so only a real older version is altered.
     let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version == 1 {
         tx.execute_batch("ALTER TABLE media ADD COLUMN added_at DATETIME")?;
+    }
+    if version == 1 || version == 2 {
+        tx.execute_batch("ALTER TABLE media ADD COLUMN restore_path TEXT")?;
     }
 
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -765,6 +773,228 @@ pub fn vault_probe(pool: &SqlitePool) -> Result<VaultStatusDto, DbError> {
     })
 }
 
+/// The two Argon2id hashes of §6.1's `vault_config` row. Kept as plain strings
+/// so `core::vault` never names a `rusqlite` type (§6.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultConfig {
+    pub password_hash: String,
+    pub recovery_key_hash: String,
+}
+
+/// §12.5.1 — the stored credential hashes, or `None` before setup.
+pub fn vault_config_get(pool: &SqlitePool) -> Result<Option<VaultConfig>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let found = conn
+        .query_row(
+            "SELECT password_hash, recovery_key_hash FROM vault_config WHERE id = 1",
+            [],
+            |row| {
+                Ok(VaultConfig {
+                    password_hash: row.get(0)?,
+                    recovery_key_hash: row.get(1)?,
+                })
+            },
+        )
+        .optional()?;
+    Ok(found)
+}
+
+/// §12.5.1 — persist the hashes. `CHECK (id = 1)` (§6.1) makes setup a
+/// one-time write: a second insert is a constraint error, which is what
+/// `core::vault::setup` maps to "already configured".
+pub fn vault_config_insert(
+    pool: &SqlitePool,
+    password_hash: &str,
+    recovery_key_hash: &str,
+) -> Result<(), DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    conn.execute(
+        "INSERT INTO vault_config (id, password_hash, recovery_key_hash) VALUES (1, ?1, ?2)",
+        rusqlite::params![password_hash, recovery_key_hash],
+    )?;
+    Ok(())
+}
+
+/// One media row `core::vault` moves in or out of the vault (§12.5). Expressed
+/// without a `rusqlite` type so the vault module never sees one (§6.5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VaultItem {
+    pub id: String,
+    /// The file's **current** root-relative location (§6.1). While hidden this is
+    /// the `.vault/items/...` path; while visible it is `Media/...`.
+    pub relative_path: String,
+    /// The §6.7 400px thumbnail path currently stored on the row.
+    pub thumb_path: String,
+    pub file_hash: Option<String>,
+    /// c17 / §12.5: where the item returns to on unhide — the `Media/...` it was
+    /// taken from. `None` while visible.
+    pub restore_path: Option<String>,
+    pub is_hidden: bool,
+}
+
+const VAULT_ITEM_COLUMNS: &str =
+    "id, relative_path, thumb_path, file_hash, restore_path, is_hidden";
+
+fn vault_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultItem> {
+    Ok(VaultItem {
+        id: row.get(0)?,
+        relative_path: row.get(1)?,
+        thumb_path: row.get(2)?,
+        file_hash: row.get(3)?,
+        restore_path: row.get(4)?,
+        is_hidden: row.get(5)?,
+    })
+}
+
+/// §12.5 — the rows named by `ids`, in the order asked for. An id that does not
+/// exist is simply absent; the caller reports how many it actually moved.
+pub fn vault_items_by_id(pool: &SqlitePool, ids: &[String]) -> Result<Vec<VaultItem>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {VAULT_ITEM_COLUMNS} FROM media WHERE id = ?1"
+    ))?;
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(item) = stmt.query_row([id], vault_item_from_row).optional()? {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+/// §12.5.6 folder-level hide — the **visible** items whose path sits under
+/// `folder` (a root-relative `Media/...` path, no trailing slash).
+///
+/// The prefix is matched with `LIKE ... ESCAPE` and the three LIKE
+/// metacharacters are escaped, because a Windows filename may contain `_` and
+/// `%` (it may not contain `/`, the separator).
+pub fn vault_visible_items_in_folder(
+    pool: &SqlitePool,
+    folder: &str,
+) -> Result<Vec<VaultItem>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let pattern = format!("{}/%", escape_like(folder));
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {VAULT_ITEM_COLUMNS} FROM media
+         WHERE is_hidden = 0 AND relative_path LIKE ?1 ESCAPE '\\'
+         ORDER BY relative_path"
+    ))?;
+    let items = stmt
+        .query_map([pattern], vault_item_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
+/// §12.5 — is a root-relative path already owned by a visible row? Guards the
+/// `relative_path` UNIQUE constraint (§6.1) on restore, where a new file may
+/// have been imported into the location the vaulted item wants back.
+pub fn relative_path_taken(pool: &SqlitePool, relative_path: &str) -> Result<bool, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let taken: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM media WHERE relative_path = ?1",
+        [relative_path],
+        |row| row.get(0),
+    )?;
+    Ok(taken > 0)
+}
+
+/// §12.5.2 — the row update for one hidden item, applied as a batch at the end
+/// of a hide (the file moves happen first; the DB is only touched once they all
+/// succeeded, so a mid-batch failure rolls back visibility by never writing).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HideUpdate {
+    pub id: String,
+    /// The new `.vault/items/...` location (§12.5, physical model).
+    pub relative_path: String,
+    /// The `Media/...` the item came from, for §12.5.3 restore.
+    pub restore_path: String,
+    /// The `.vault/thumbs/<hash>.webp` path.
+    pub thumb_path: String,
+}
+
+/// §12.5.2 — mark the batch hidden in one transaction.
+pub fn vault_apply_hide(pool: &SqlitePool, updates: &[HideUpdate]) -> Result<usize, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let mut applied = 0usize;
+    {
+        let mut stmt = tx.prepare(
+            "UPDATE media
+             SET relative_path = ?1, restore_path = ?2, thumb_path = ?3, is_hidden = 1
+             WHERE id = ?4",
+        )?;
+        for update in updates {
+            applied += stmt.execute(rusqlite::params![
+                update.relative_path,
+                update.restore_path,
+                update.thumb_path,
+                update.id
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(applied)
+}
+
+/// §12.5.3 — the row update for one restored item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnhideUpdate {
+    pub id: String,
+    /// The restored `Media/...` location (auto-suffixed on conflict).
+    pub relative_path: String,
+    /// The §6.7 400px thumbnail destination to regenerate into.
+    pub thumb_path: String,
+}
+
+/// §12.5.3 — return the batch to the visible library in one transaction.
+pub fn vault_apply_unhide(pool: &SqlitePool, updates: &[UnhideUpdate]) -> Result<usize, DbError> {
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let mut applied = 0usize;
+    {
+        let mut stmt = tx.prepare(
+            "UPDATE media
+             SET relative_path = ?1, restore_path = NULL, thumb_path = ?2, is_hidden = 0
+             WHERE id = ?3",
+        )?;
+        for update in updates {
+            applied += stmt.execute(rusqlite::params![
+                update.relative_path,
+                update.thumb_path,
+                update.id
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(applied)
+}
+
+/// Escape `%`, `_` and the escape char for a `LIKE ... ESCAPE '\'` prefix.
+fn escape_like(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// A row the scanner wants to exist, expressed without a `rusqlite` type so
 /// `core::scanner` never sees one (§6.5). One per file, flattened with its
 /// optional §7.5 location so a batch is a single transaction.
@@ -1276,10 +1506,11 @@ mod tests {
     }
 
     /// The migration ladder, pinned: a v1 database (a `media` table without
-    /// `added_at`) gains the column, keeps its rows and is stamped vintage 2 —
-    /// never downgraded, never left half-migrated (§6.4).
+    /// `added_at`) gains `added_at` and `restore_path`, keeps its rows and is
+    /// stamped the current vintage — never downgraded, never left half-migrated
+    /// (§6.4).
     #[test]
-    fn a_v1_database_gains_added_at_and_stamps_v2() {
+    fn a_v1_database_gains_added_at_and_restore_path() {
         let dir = tempfile::tempdir().unwrap();
         let mut conn = Connection::open(dir.path().join("app.db")).unwrap();
         conn.execute_batch(
@@ -1320,12 +1551,66 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert!(columns.iter().any(|c| c == "added_at"));
+        assert!(columns.iter().any(|c| c == "restore_path"));
         let retained: i64 = conn
             .query_row("SELECT COUNT(*) FROM media WHERE id = 'm1'", [], |row| {
                 row.get(0)
             })
             .unwrap();
         assert_eq!(retained, 1, "the migration never drops rows");
+    }
+
+    /// c17: a v2 database (the shape c14 shipped) gains `media.restore_path`,
+    /// the column §12.5 restores a hidden item through.
+    #[test]
+    fn a_v2_database_gains_restore_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("app.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE media (
+                id              TEXT PRIMARY KEY,
+                relative_path   TEXT NOT NULL UNIQUE,
+                thumb_path      TEXT NOT NULL,
+                file_hash       TEXT UNIQUE,
+                file_size       INTEGER,
+                file_type       TEXT,
+                captured_at     DATETIME,
+                added_at        DATETIME,
+                has_metadata    BOOLEAN DEFAULT 1,
+                is_hidden       BOOLEAN DEFAULT 0,
+                device_name     TEXT
+             );
+             CREATE TABLE locations (
+                media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                city TEXT, state TEXT, country TEXT,
+                latitude REAL, longitude REAL
+             );
+             INSERT INTO media (id, relative_path, thumb_path, has_metadata) VALUES
+                ('m1', 'a.jpg', 'a.webp', 1);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        apply_schema(&mut conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(media)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|c| c == "restore_path"));
+        let retained: i64 = conn
+            .query_row("SELECT COUNT(*) FROM media WHERE id = 'm1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, 1);
     }
 
     #[test]

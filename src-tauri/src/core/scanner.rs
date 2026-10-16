@@ -408,7 +408,11 @@ pub(crate) fn free_destination(target: &Path) -> Result<PathBuf, AppError> {
 ///
 /// The stem is preserved (`IMG_4501.HEIC` → `IMG_4501.webp`, as §22 shows) and the
 /// extension is forced to `.webp` because §7.6 encodes WebP at both sizes.
-fn thumb_path_for(rel_media: &str) -> String {
+///
+/// `pub(crate)` since c17: `core::vault` reuses it to recompute a restored
+/// item's 400px destination (§12.5.3), so the vault and the scanner cannot
+/// disagree about where a thumbnail lives.
+pub(crate) fn thumb_path_for(rel_media: &str) -> String {
     let rest = rel_media
         .strip_prefix(&format!("{}/", paths::MEDIA_DIR))
         .unwrap_or(rel_media);

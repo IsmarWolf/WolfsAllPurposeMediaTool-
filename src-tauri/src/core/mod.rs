@@ -10,4 +10,5 @@ pub mod placement;
 pub mod scanner;
 pub mod thumbs;
 pub mod usb;
+pub mod vault;
 pub mod wifi;

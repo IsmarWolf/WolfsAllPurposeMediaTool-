@@ -87,6 +87,11 @@ image = { version = "0.25", default-features = false, features = [
 # same mechanism rusqlite's bundled SQLite already uses on this box.
 webp = "0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
+# PLAN §12.5.1 (c17): the vault password and recovery key are stored as
+# **Argon2id** hashes (`vault_config.password_hash` / `recovery_key_hash`,
+# §6.1) - never in clear, and never as a fast SHA. Argon2id is the spec's
+# chosen memory-hard KDF, so this is a required addition, not an upgrade.
+argon2 = { version = "0.5", features = ["std"] }
 # PLAN §7.3 step 1 (recursive Media/<device> walk) and step 1's sha256 dedupe,
 # plus the §22 media id. All three were already in the tree transitively through
 # Tauri, so this is a promotion to direct deps, not a new dependency.
