@@ -25,6 +25,7 @@ use crate::core::layout::{self, LayoutReport};
 use crate::core::models::RootInfoDto;
 use crate::core::paths::{PathResolver, RootSource};
 use crate::core::scanner::CancelFlag;
+use crate::core::vault::VaultSession;
 use crate::error::AppError;
 
 /// §9.2 event channels. Background work reaches the UI **only** through these;
@@ -99,6 +100,11 @@ pub struct AppState {
     /// stops it explicitly instead of letting it write into a volume the app no
     /// longer uses.
     wifi: Arc<Mutex<Option<Arc<crate::core::wifi::WifiServer>>>>,
+    /// c18: the vault session flag (§12.5.1). Outside the `RwLock` for the same
+    /// reason as the jobs and the Wi-Fi server: it is independent of the tree and
+    /// the pool, and it is flipped by `vault_unlock`/`vault_lock` while
+    /// `vault_status` reads it — a snapshot clone would hand out a stale flag.
+    vault: Arc<Mutex<VaultSession>>,
 }
 
 impl AppState {
@@ -116,6 +122,7 @@ impl AppState {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
             jobs: Arc::new(JobRegistry::default()),
             wifi: Arc::new(Mutex::new(None)),
+            vault: Arc::new(Mutex::new(VaultSession::new())),
         }
     }
 
@@ -145,6 +152,21 @@ impl AppState {
             let _ = server.stop();
             self.set_wifi_server(None);
         }
+    }
+
+    /// c18: the vault session, shared with the `vault_*` commands. `Arc<Mutex>`
+    /// rather than a clone on the snapshot so `vault_unlock` and `vault_status`
+    /// see the same flag (a session is not part of a root snapshot).
+    pub fn vault_session(&self) -> Arc<Mutex<VaultSession>> {
+        Arc::clone(&self.vault)
+    }
+
+    /// §11.6 Cofre dot / §12.5 gate: is Vault Mode open right now?
+    pub fn vault_unlocked(&self) -> bool {
+        self.vault
+            .lock()
+            .expect("AppState vault poisoned")
+            .is_unlocked()
     }
 
     /// What Settings → Origem and `[Z1d]` show (§5.6, §11.0).
@@ -188,6 +210,9 @@ impl AppState {
             // c11: the listener writes into the root it was built with, and the
             // tree it writes to no longer exists.
             self.stop_wifi_server();
+            // c18: the vault session belongs to the database that just moved, so
+            // the next root starts locked (§12.5).
+            self.vault.lock().expect("AppState vault poisoned").lock();
         }
         Ok((info, changed))
     }
@@ -339,6 +364,7 @@ mod tests {
             inner: RwLock::new(Snapshot::assemble(resolver, layout, pool)),
             jobs: Arc::new(JobRegistry::default()),
             wifi: Arc::new(Mutex::new(None)),
+            vault: Arc::new(Mutex::new(VaultSession::new())),
         }
     }
 

@@ -4,4 +4,5 @@ pub mod lists;
 pub mod media;
 pub mod settings;
 pub mod usb;
+pub mod vault;
 pub mod wifi;

@@ -113,8 +113,8 @@ pub struct CityCountDto {
     pub count: i64,
 }
 
-/// §8.1 `vault_status`. `unlocked` is a session flag owned by c18; c4 always
-/// reports `false` and only `configured` comes from the DB.
+/// §8.1 `vault_status`. `configured` and `has_recovery_hint` come from the
+/// `vault_config` row; `unlocked` is the live session flag owned by c18.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStatusDto {

@@ -16,9 +16,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::core::db::{self, SqlitePool};
-use crate::core::models::{
-    CityCountDto, FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto, VaultStatusDto,
-};
+use crate::core::models::{CityCountDto, FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto};
 use crate::core::paths::PathResolver;
 use crate::core::scanner;
 use crate::core::thumbs;
@@ -34,15 +32,6 @@ pub fn stats_get(state: State<'_, AppState>) -> Result<StatsDto, AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
     Ok(db::stats(&pool, MediaScope::Standard)?)
-}
-
-/// §8.1 `vault_status` — the Dashboard vault mini-card (C-1f). `configured` is a
-/// real read of `vault_config`; `unlocked` is c18's session flag.
-#[tauri::command]
-pub fn vault_status(state: State<'_, AppState>) -> Result<VaultStatusDto, AppError> {
-    let snapshot = state.snapshot();
-    let pool = snapshot.require_pool()?;
-    Ok(db::vault_probe(&pool)?)
 }
 
 /// §8.1 `scan_start` — §7.3's scanner, as a job.
@@ -256,6 +245,11 @@ pub fn media_query(
     Ok(db::media_query(&pool, &spec)?)
 }
 /// §8.1 `media_detail` — one media item for the lightbox.
+///
+/// It is an id fetch, not a scoped query (§6.6): the id can only come from a
+/// scoped list the user already saw. c18 closes the edge anyway — a hidden item
+/// resolves to `None` unless Vault Mode is unlocked — so a stale or hostile id
+/// can never surface a vault file in the standard shell (C6).
 #[tauri::command]
 pub fn media_detail(
     state: State<'_, AppState>,
@@ -263,7 +257,27 @@ pub fn media_detail(
 ) -> Result<Option<crate::core::models::MediaDto>, AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
-    Ok(db::media_detail(&pool, &id)?)
+    match db::media_detail(&pool, &id)? {
+        Some(item) if item.is_hidden && !state.vault_unlocked() => Ok(None),
+        other => Ok(other),
+    }
+}
+
+/// C6 at the id edge (c18). `media_reveal`, `media_scope_video` and `media_remove`
+/// take an id, not a `MediaScope`, so nothing in their SQL stops them naming a
+/// hidden row; that would let the standard shell reveal, play or delete a vault
+/// file. A hidden row is only reachable while Vault Mode is unlocked. `E_AUTH`
+/// (not a silent no-op) so a buggy caller learns why.
+fn require_visible_unless_unlocked(
+    state: &State<'_, AppState>,
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<(), AppError> {
+    if state.vault_unlocked() || !db::media_any_hidden(pool, ids)? {
+        Ok(())
+    } else {
+        Err(AppError::from(crate::core::vault::VaultError::Locked))
+    }
 }
 
 /// §8.1 `media_scope_video` — the lightbox's one-file scope grant (c13 fix,
@@ -285,6 +299,7 @@ pub fn media_scope_video(
 ) -> Result<(), AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
+    require_visible_unless_unlocked(&state, &pool, std::slice::from_ref(&id))?;
     let Some(media) = db::media_detail(&pool, &id)? else {
         return Ok(());
     };
@@ -301,6 +316,7 @@ pub fn media_scope_video(
 pub fn media_reveal(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
+    require_visible_unless_unlocked(&state, &pool, std::slice::from_ref(&id))?;
     let media = db::media_detail(&pool, &id)?
         .ok_or_else(|| AppError::Conflict(format!("media não encontrado: {id}")))?;
     let abs = snapshot.resolver.rel_to_abs(&media.relative_path)?;
@@ -311,11 +327,13 @@ pub fn media_reveal(state: State<'_, AppState>, id: String) -> Result<(), AppErr
 }
 
 /// §8.1 `media_remove` — delete media rows by id. The frontend always confirms
-/// first (C7/§14); this is the backend half.
+/// first (C7/§14); this is the backend half. c18 refuses a hidden row unless Vault
+/// Mode is unlocked, so a stale selection cannot orphan a vault file.
 #[tauri::command]
 pub fn media_remove(state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
+    require_visible_unless_unlocked(&state, &pool, &ids)?;
     db::media_remove(&pool, &ids).map_err(AppError::from)
 }
 

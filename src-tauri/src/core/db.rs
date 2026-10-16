@@ -466,6 +466,30 @@ pub fn media_remove(pool: &SqlitePool, ids: &[String]) -> Result<usize, DbError>
     Ok(deleted)
 }
 
+/// §6.6/C6 — does any of `ids` name a hidden row? The id-based commands
+/// (`media_detail`/`media_reveal`/`media_scope_video`/`media_remove`, c18) carry
+/// no `MediaScope`, so this is how they refuse a vault item while the session is
+/// closed. One prepared lookup per id, mirroring `media_remove`'s own loop.
+pub fn media_any_hidden(pool: &SqlitePool, ids: &[String]) -> Result<bool, DbError> {
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare("SELECT is_hidden FROM media WHERE id = ?1")?;
+    for id in ids {
+        if let Some(hidden) = stmt
+            .query_row([id], |row| row.get::<_, bool>(0))
+            .optional()?
+            && hidden
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// §7.2/§7.9 — the raw `lists` row plus its **visible** member count.
 ///
 /// Parsing the stored criteria into a `FilterSpec` is `core::lists`'s job: this
@@ -756,7 +780,8 @@ pub fn vacuum(pool: &SqlitePool) -> Result<(), DbError> {
 }
 
 /// §7.2 `vault_probe(pool)`: is the vault configured at all? Deliberately does
-/// not touch `password_hash` — c4 has no session, c18 owns unlock/hide.
+/// not touch `password_hash` — this reads the DB half only; c18's `vault_status`
+/// command overlays the live `unlocked` session flag.
 pub fn vault_probe(pool: &SqlitePool) -> Result<VaultStatusDto, DbError> {
     let conn = pool
         .get()
@@ -766,10 +791,13 @@ pub fn vault_probe(pool: &SqlitePool) -> Result<VaultStatusDto, DbError> {
         [],
         |row| row.get(0),
     )?;
+    let configured = configured > 0;
     Ok(VaultStatusDto {
-        configured: configured > 0,
+        configured,
         unlocked: false,
-        has_recovery_hint: false,
+        // §12.5.1 stores a recovery-key hash at setup and never removes it, so a
+        // configured vault always has a recovery path for `[C-6c]`.
+        has_recovery_hint: configured,
     })
 }
 
@@ -1735,7 +1763,14 @@ mod tests {
         .unwrap();
         let status = vault_probe(&pool).unwrap();
         assert!(status.configured);
-        assert!(!status.unlocked, "c4 has no session; c18 owns unlock");
+        assert!(
+            !status.unlocked,
+            "unlocked is c18's session flag, not the DB"
+        );
+        assert!(
+            status.has_recovery_hint,
+            "a configured vault always stored a recovery-key hash"
+        );
     }
 
     fn gallery_spec() -> FilterSpec {
@@ -1841,6 +1876,48 @@ mod tests {
         .unwrap();
         assert_eq!(vault.total, 1);
         assert_eq!(vault.items[0].id, "g4");
+    }
+
+    /// c18: the id-based commands (`media_detail`/`media_reveal`/`media_scope_video`/
+    /// `media_remove`) carry no `MediaScope`, so `media_any_hidden` is how they
+    /// refuse a vault item while the session is closed. It must see a hidden row,
+    /// ignore unknown ids, and be false for an empty batch.
+    #[test]
+    fn media_any_hidden_is_true_only_for_a_hidden_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        assert!(!media_any_hidden(&pool, &[]).unwrap());
+        assert!(
+            !media_any_hidden(&pool, &["g1".into()]).unwrap(),
+            "g1 is visible"
+        );
+        assert!(
+            !media_any_hidden(&pool, &["nope".into()]).unwrap(),
+            "an unknown id is not hidden, it is absent"
+        );
+        assert!(
+            media_any_hidden(&pool, &["g1".into(), "g4".into()]).unwrap(),
+            "one hidden id in the batch is enough to refuse"
+        );
+    }
+
+    /// c18: `db::media_detail` is deliberately scope-free — it must return a hidden
+    /// row so the Vault Mode lightbox can show it (Vault Mode knows the id). C6 is
+    /// enforced at the command edge, not here; this test stops a future "fix" from
+    /// filtering hidden rows out of the vault's own lightbox.
+    #[test]
+    fn media_detail_returns_a_hidden_row_for_the_command_to_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        seed_gallery(&pool.get().unwrap());
+
+        let hidden = media_detail(&pool, "g4").unwrap().expect("g4 exists");
+        assert!(
+            hidden.is_hidden,
+            "the db hands the row over; the command guards"
+        );
     }
 
     #[test]

@@ -58,7 +58,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::media::stats_get,
-            commands::media::vault_status,
             commands::media::scan_start,
             commands::media::scan_cancel,
             commands::media::geo_lookup,
@@ -83,6 +82,14 @@ pub fn run() {
             commands::lists::lists_remove_items,
             commands::lists::lists_snapshot_apply,
             commands::lists::lists_snapshot_sync,
+            commands::vault::vault_status,
+            commands::vault::vault_setup,
+            commands::vault::vault_unlock,
+            commands::vault::vault_lock,
+            commands::vault::vault_recover,
+            commands::vault::vault_hide,
+            commands::vault::vault_hide_folder,
+            commands::vault::vault_unhide,
             commands::settings::resolve_app_root,
             commands::settings::settings_recalc_root,
             commands::settings::settings_reveal_root,
