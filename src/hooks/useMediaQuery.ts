@@ -18,6 +18,15 @@ const DEFAULT_SPEC: FilterSpec = {
 }
 
 /**
+ * The spec a fresh filter surface starts from. Exported for the c16 snapshot
+ * builder (§11.5), which seeds its local spec from a list's stored criteria —
+ * or this when the list is new/manual — and must agree with the gallery's own
+ * defaults or "Editar critérios" would open on a different starting point than
+ * the gallery shows.
+ */
+export const DEFAULT_FILTER_SPEC: FilterSpec = DEFAULT_SPEC
+
+/**
  * §10.3 `useMediaQuery()` — the gallery's data hook.
  *
  * The spec is the single source of truth: every filter mutation produces a new

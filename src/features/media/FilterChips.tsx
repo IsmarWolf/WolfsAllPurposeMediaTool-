@@ -1,11 +1,16 @@
 import { useI18n } from '../../hooks/useContexts'
 import type { FilterSpec } from '../../types/api'
+import { appliedFilters, chipLabel, type AppliedFilter } from './applied'
 
 /**
  * §10.6.1 `FilterChips` — the active-filter bar.
  *
  * Each chip shows `[Filter Label: Value] [✕ remove]`. Clear All is shown
  * ONLY when count >= 2 (C10). Chip removal is instant and re-runs the query.
+ *
+ * The list of active filters comes from `appliedFilters` — the same helper the
+ * smart-list criteria summary reads — so the chips and a snapshot can never
+ * describe one spec two ways.
  */
 export function FilterChips({
   spec,
@@ -18,44 +23,33 @@ export function FilterChips({
 }) {
   const { t } = useI18n()
 
-  const chips: { label: string; remove: () => void }[] = []
+  const remove = (filter: AppliedFilter) => {
+    switch (filter.field) {
+      case 'search':
+        onUpdate({ search: null })
+        break
+      case 'device':
+        onUpdate({ device: null })
+        break
+      case 'city':
+        onUpdate({ cities: spec.cities.filter((c) => c !== filter.value) })
+        break
+      case 'month':
+        onUpdate({ month: null })
+        break
+      case 'fileType':
+        onUpdate({ fileType: null })
+        break
+      case 'noMetadata':
+        onUpdate({ noMetadata: false })
+        break
+    }
+  }
 
-  if (spec.search) {
-    chips.push({
-      label: `${t('media.search')}: ${spec.search}`,
-      remove: () => onUpdate({ search: null }),
-    })
-  }
-  if (spec.device) {
-    chips.push({
-      label: `${t('media.device')}: ${spec.device}`,
-      remove: () => onUpdate({ device: null }),
-    })
-  }
-  spec.cities.forEach((city) => {
-    chips.push({
-      label: `${t('media.location')}: ${city}`,
-      remove: () => onUpdate({ cities: spec.cities.filter((c) => c !== city) }),
-    })
-  })
-  if (spec.month) {
-    chips.push({
-      label: `${t('media.month')}: ${spec.month}`,
-      remove: () => onUpdate({ month: null }),
-    })
-  }
-  if (spec.fileType) {
-    chips.push({
-      label: `${t('media.type')}: ${spec.fileType}`,
-      remove: () => onUpdate({ fileType: null }),
-    })
-  }
-  if (spec.noMetadata) {
-    chips.push({
-      label: t('media.noMetadata'),
-      remove: () => onUpdate({ noMetadata: false }),
-    })
-  }
+  const chips = appliedFilters(spec).map((filter) => ({
+    label: chipLabel(filter, t),
+    remove: () => remove(filter),
+  }))
 
   if (chips.length === 0) return null
 

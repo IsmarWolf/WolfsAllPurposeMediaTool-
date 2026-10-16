@@ -13,6 +13,12 @@ import type {
   FilterSpec,
   GeoDto,
   IngestUsbStartDto,
+  ListCreateDto,
+  ListDetailDto,
+  ListDto,
+  ListItemsDto,
+  ListSnapshotApplyDto,
+  ListUpdateDto,
   MediaDto,
   MediaQueryDto,
   MediaScopeDto,
@@ -130,3 +136,35 @@ export const mediaScopeVideo = (id: string) => call<void>('media_scope_video', {
 
 /** §8.1 `media_remove` — delete media rows by id. */
 export const mediaRemove = (ids: string[]) => call<number>('media_remove', { ids })
+
+/* ------------------------------------------------------------------ lists §8.1/c15 */
+
+/** §8.1 `lists_list` — every list with its visible member count, A→Z (§11.5). */
+export const listsList = () => call<ListDto[]>('lists_list')
+
+/** §8.1 (amended c15) `lists_detail` — one list plus its members (§11.5 pane). */
+export const listsDetail = (id: string) => call<ListDetailDto | null>('lists_detail', { id })
+
+/** §8.1 `lists_create` — a new manual list; resolves the created row so the UI
+ *  can select it without a second read. */
+export const listsCreate = (payload: ListCreateDto) => call<ListDto>('lists_create', { payload })
+
+/** §8.1 `lists_update` — rename only. */
+export const listsUpdate = (payload: ListUpdateDto) => call<void>('lists_update', { payload })
+
+/** §8.1 `lists_delete` — delete the list and its membership. */
+export const listsDelete = (id: string) => call<void>('lists_delete', { id })
+
+/** §8.1 `lists_add_items` — manual lists only (a smart list refuses). */
+export const listsAddItems = (payload: ListItemsDto) => call<void>('lists_add_items', { payload })
+
+/** §8.1 `lists_remove_items` — manual lists only. */
+export const listsRemoveItems = (payload: ListItemsDto) =>
+  call<void>('lists_remove_items', { payload })
+
+/** §8.1 `lists_snapshot_apply` — store the active spec and replace membership. */
+export const listsSnapshotApply = (payload: ListSnapshotApplyDto) =>
+  call<void>('lists_snapshot_apply', { payload })
+
+/** §8.1 `lists_snapshot_sync` — re-run the stored criteria and re-sync members. */
+export const listsSnapshotSync = (id: string) => call<void>('lists_snapshot_sync', { id })

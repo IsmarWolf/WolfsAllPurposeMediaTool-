@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useI18n } from '../../hooks/useContexts'
 import { useCityCounts } from '../../hooks/useCityCounts'
 import { formatCount } from '../../lib/format'
@@ -10,17 +11,24 @@ import type { FilterSpec } from '../../types/api'
  * (sem metadados). Apply mutates the shared FilterSpec; chips live under the
  * filter row. The drawer is rendered only when toggled (lazy), so the city
  * counts below are not fetched until it opens.
+ *
+ * `footer` is the c16 seam: the §11.5 **snapshot builder** is this exact drawer
+ * with `[C-5i Aplicar critérios (snapshot)]` in a footer, so the gallery and the
+ * builder cannot drift (§15 gallery ↔ snapshot parity). The gallery passes no
+ * footer — its apply is live.
  */
 export function FilterDrawer({
   open,
   onClose,
   spec,
   onApply,
+  footer,
 }: {
   open: boolean
   onClose: () => void
   spec: FilterSpec
   onApply: (patch: Partial<FilterSpec>) => void
+  footer?: ReactNode
 }) {
   const { t } = useI18n()
 
@@ -87,6 +95,8 @@ export function FilterDrawer({
             {t('media.filterNoMetadata')}
           </label>
         </div>
+
+        {footer ? <div className="md-drawer__footer">{footer}</div> : null}
       </div>
     </div>
   )

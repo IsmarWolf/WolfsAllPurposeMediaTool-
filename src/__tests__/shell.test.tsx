@@ -99,6 +99,20 @@ function defaultMock(command: string, _args?: unknown): unknown {
       return MEDIA_PAGE.items[0]
     case 'media_scope_video':
       return null
+    // Lists (c16) — the Lists screen owns these; the defaults keep any
+    // accidental mount honest (an empty index, no detail) instead of throwing.
+    case 'lists_list':
+      return []
+    case 'lists_detail':
+      return null
+    case 'lists_create':
+    case 'lists_update':
+    case 'lists_delete':
+    case 'lists_add_items':
+    case 'lists_remove_items':
+    case 'lists_snapshot_apply':
+    case 'lists_snapshot_sync':
+      return null
     // The Backup screen mounts the USB hook for every tab (the job lives in the
     // Rust `JobRegistry`, so the subscription must not depend on which tab is
     // open). The truthful default in a test is an empty cable.
@@ -1749,5 +1763,221 @@ describe('Mídia gallery (c10) — grid, states, chips (§11.2)', () => {
       fireEvent.keyDown(window, { key: 'Escape' })
     })
     expect(screen.queryByRole('dialog', { name: 'Filtros' })).toBeNull()
+  })
+})
+
+describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)', () => {
+  const SMART_SPEC = {
+    scope: 'standard' as const,
+    device: null,
+    cities: ['Paris'],
+    month: null,
+    noMetadata: false,
+    search: null,
+    fileType: 'image' as const,
+    sort: 'capturedDesc' as const,
+    limit: 240,
+    offset: 0,
+  }
+  const LIST_MANUAL = {
+    id: 'l1',
+    name: 'Viagens',
+    filterCriteria: null,
+    createdAt: '2024-01-01T00:00:00',
+    memberCount: 1,
+  }
+  const LIST_SMART = {
+    id: 'l2',
+    name: '2024',
+    filterCriteria: SMART_SPEC,
+    createdAt: '2024-01-01T00:00:00',
+    memberCount: 0,
+  }
+  const DETAIL_MANUAL = { ...LIST_MANUAL, members: [MEDIA_PAGE.items[0]] }
+  const DETAIL_SMART = { ...LIST_SMART, members: [] }
+
+  /** The Lists screen mounts `lists_list`; each row's detail mounts on select. */
+  function withLists() {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'lists_list') {
+        return [LIST_MANUAL, LIST_SMART]
+      }
+      if (command === 'lists_detail') {
+        return (args as { id: string }).id === 'l2' ? DETAIL_SMART : DETAIL_MANUAL
+      }
+      return defaultMock(command, args)
+    })
+  }
+
+  async function openLists() {
+    await renderShell()
+    const lists = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Listas'),
+    ) as HTMLElement
+    fireEvent.click(lists)
+  }
+
+  async function openMedia() {
+    await renderShell()
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+  }
+
+  it('renders the index with a manual/smart badge and the selected list members', async () => {
+    withLists()
+    await openLists()
+
+    const items = await screen.findAllByTestId('lists-index-item')
+    expect(items.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Viagens'),
+      expect.stringContaining('2024'),
+    ])
+    // The first list is auto-selected; a manual list shows its members.
+    expect((await screen.findByTestId('lists-detail-name')).textContent).toBe('Viagens')
+    expect(screen.getByTestId('lists-members')).not.toBeNull()
+    expect(screen.getAllByTestId('lists-member')).toHaveLength(1)
+  })
+
+  it('a smart list shows its stored criteria as chips and the smart bar', async () => {
+    withLists()
+    await openLists()
+    fireEvent.click((await screen.findAllByTestId('lists-index-item'))[1])
+
+    const criteria = await screen.findByTestId('lists-criteria')
+    // Rendered by the same helper as the gallery chips (§15 parity).
+    expect(within(criteria).getByText('Localização: Paris')).not.toBeNull()
+    expect(within(criteria).getByText('Tipo: image')).not.toBeNull()
+    expect(screen.getByTestId('lists-smartbar')).not.toBeNull()
+    // A smart list never offers the manual picker.
+    expect(screen.queryByTestId('lists-add-media')).toBeNull()
+  })
+
+  it('creates a list and selects the created row', async () => {
+    withLists()
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'lists_create') {
+        const name = (args as { payload: { name: string } }).payload.name
+        return { ...LIST_MANUAL, id: 'l9', name, memberCount: 0 }
+      }
+      if (command === 'lists_detail') {
+        return { ...DETAIL_MANUAL, id: 'l9', name: 'Nova' }
+      }
+      if (command === 'lists_list') {
+        return [LIST_MANUAL, LIST_SMART]
+      }
+      return defaultMock(command, args)
+    })
+    await openLists()
+
+    fireEvent.click(await screen.findByTestId('lists-new'))
+    fireEvent.change(screen.getByLabelText('Nova lista'), { target: { value: 'Nova' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_create')
+      expect(call?.[1]).toEqual({ payload: { name: 'Nova' } })
+    })
+  })
+
+  it('renames the active list through lists_update', async () => {
+    withLists()
+    await openLists()
+    await screen.findByTestId('lists-detail-name')
+
+    fireEvent.click(screen.getByTestId('lists-rename'))
+    fireEvent.change(screen.getByLabelText('Renomear'), { target: { value: 'Férias' } })
+    fireEvent.click(screen.getByTestId('lists-rename-save'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_update')
+      expect(call?.[1]).toEqual({ payload: { id: 'l1', name: 'Férias' } })
+    })
+  })
+
+  it('[Aplicar à lista] snapshots the gallery’s active spec into an existing list (§12.4)', async () => {
+    withLists()
+    await openMedia()
+    await screen.findByRole('button', { name: 'Aplicar à lista' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar à lista' }))
+    // The picker reads the index, then applying replaces the list's membership.
+    fireEvent.click(await screen.findByRole('button', { name: /Viagens/ }))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_apply')
+      expect(call?.[1]).toEqual({
+        payload: { listId: 'l1', spec: expect.objectContaining({ scope: 'standard' }) },
+      })
+    })
+  })
+
+  it('[Criar e aplicar] makes the list and snapshots into it in one step', async () => {
+    withLists()
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'lists_create') {
+        return { ...LIST_MANUAL, id: 'l9', name: 'Nova' }
+      }
+      if (command === 'lists_list') {
+        return [LIST_MANUAL]
+      }
+      return defaultMock(command, args)
+    })
+    await openMedia()
+    await screen.findByRole('button', { name: 'Aplicar à lista' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar à lista' }))
+    fireEvent.change(await screen.findByLabelText('Nova lista'), { target: { value: 'Nova' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar e aplicar' }))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_apply')
+      expect(call?.[1]).toEqual({
+        payload: { listId: 'l9', spec: expect.objectContaining({ scope: 'standard' }) },
+      })
+    })
+  })
+
+  it('picks media into a manual list through lists_add_items (§11.5 [C-5g])', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      if (command === 'lists_list') {
+        return [LIST_MANUAL]
+      }
+      if (command === 'lists_detail') {
+        return DETAIL_MANUAL
+      }
+      return defaultMock(command, args)
+    })
+    await openLists()
+
+    fireEvent.click(await screen.findByTestId('lists-add-media'))
+    const tiles = await screen.findAllByTestId('lists-pick-media-grid')
+    expect(tiles).toHaveLength(1)
+
+    const mediaTiles = screen.getAllByTestId('media-tile')
+    fireEvent.click(mediaTiles[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar selecionados' }))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_add_items')
+      expect(call?.[1]).toEqual({ payload: { listId: 'l1', mediaIds: ['g1'] } })
+    })
+  })
+
+  it('[Sincronizar] re-runs a smart list’s stored criteria (§11.5 [C-5f])', async () => {
+    withLists()
+    await openLists()
+    fireEvent.click((await screen.findAllByTestId('lists-index-item'))[1])
+
+    fireEvent.click(await screen.findByTestId('lists-sync'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_sync')
+      expect(call?.[1]).toEqual({ id: 'l2' })
+    })
   })
 })

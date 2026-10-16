@@ -204,6 +204,57 @@ export interface CityCountDto {
   count: number
 }
 
+/* ------------------------------------------------------------------ lists §7.1 */
+
+/**
+ * §7.1 `ListDto` — one row of the Lists page (§11.5).
+ *
+ * `filterCriteria` is the single source of truth for the list's *kind*: `null`
+ * is a **manual** list (the user adds/removes any media), a `FilterSpec` is a
+ * **smart snapshot** list whose membership is a snapshot of that stored spec
+ * (§7.9). The backend always normalizes it to `scope: 'standard'` before it is
+ * stored, so a list can never capture hidden media (C6, §12.5.6).
+ */
+export interface ListDto {
+  id: string
+  name: string
+  filterCriteria: FilterSpec | null
+  createdAt: string
+  memberCount: number
+}
+
+/**
+ * §7.1 `ListDetailDto` — a list **flattened** plus its members, for the §11.5
+ * right pane. The backend uses `#[serde(flatten)]`, so on the wire this is one
+ * `ListDto`'s fields plus `members` — never a nested `{ list, members }`.
+ */
+export interface ListDetailDto extends ListDto {
+  members: MediaDto[]
+}
+
+/** §8.1 `lists_create` payload — a new list starts **manual** (§7.9). */
+export interface ListCreateDto {
+  name: string
+}
+
+/** §8.1 `lists_update` payload — rename only (criteria change via apply). */
+export interface ListUpdateDto {
+  id: string
+  name: string
+}
+
+/** §8.1 `lists_add_items` / `lists_remove_items` payload (manual lists). */
+export interface ListItemsDto {
+  listId: string
+  mediaIds: string[]
+}
+
+/** §8.1 `lists_snapshot_apply` payload: the active gallery spec + target list. */
+export interface ListSnapshotApplyDto {
+  listId: string
+  spec: FilterSpec
+}
+
 /** `wolfs://toast` payload (§9.2). */
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'
 

@@ -13,6 +13,8 @@ import { MediaGrid } from './MediaGrid'
 import { MediaLightbox } from './MediaLightbox'
 import { FilterDrawer } from './FilterDrawer'
 import { FilterChips } from './FilterChips'
+import { MediaFilterRow } from './MediaFilterRow'
+import { ApplyToList } from './ApplyToList'
 
 /**
  * §12.6's guard, reused by the two bindings whose owner may also handle the key
@@ -44,6 +46,7 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
+  const [applyOpen, setApplyOpen] = useState(false)
 
   const items = query.data?.items ?? []
   const total = query.data?.total ?? 0
@@ -142,6 +145,10 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
             <span className="md-badge" data-testid="media-total">
               {formatCount(total)}
             </span>
+            {/* §11.2 [Z3d] / §12.4 — snapshot the active spec into a list. */}
+            <Button variant="tonal" onClick={() => setApplyOpen(true)}>
+              {t('lists.applyToList')}
+            </Button>
             <Button variant="tonal" onClick={() => setSelectionMode((v) => !v)}>
               {t('media.selectionMode')}
             </Button>
@@ -150,43 +157,11 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
       />
 
       {/* [Z3g-i] L1 filter row — a Mídia concern, never a Zone 1 one. */}
-      <div className="l1-row" role="group" aria-label={t('media.filtersL1')}>
-        <span className="l1-row__label">{t('media.filtersL1')}</span>
-        <input
-          type="search"
-          className="md-input"
-          placeholder={t('media.searchPlaceholder')}
-          value={query.spec.search ?? ''}
-          onChange={(e) => query.updateSpec({ search: e.target.value || null })}
-          aria-label={t('media.search')}
-        />
-        <select
-          className="md-select"
-          value={query.spec.fileType ?? ''}
-          onChange={(e) => query.updateSpec({ fileType: e.target.value || null })}
-          aria-label={t('media.type')}
-        >
-          <option value="">{t('media.typeAll')}</option>
-          <option value="image">{t('media.typeImage')}</option>
-          <option value="video">{t('media.typeVideo')}</option>
-        </select>
-        <select
-          className="md-select"
-          value={query.spec.sort}
-          onChange={(e) => query.updateSpec({ sort: e.target.value })}
-          aria-label={t('media.sort')}
-        >
-          <option value="capturedDesc">{t('media.sortDateDesc')}</option>
-          <option value="addedDesc">{t('media.sortAddedDesc')}</option>
-          <option value="capturedAsc">{t('media.sortDateAsc')}</option>
-          <option value="name">{t('media.sortName')}</option>
-          <option value="size">{t('media.sortSize')}</option>
-        </select>
-        {/* [Z3j] L2 drawer button. */}
-        <Button variant="tonal" onClick={() => setDrawerOpen(true)}>
-          {t('media.filtersL2')}
-        </Button>
-      </div>
+      <MediaFilterRow
+        spec={query.spec}
+        onUpdate={query.updateSpec}
+        onOpenDrawer={() => setDrawerOpen(true)}
+      />
 
       {/* [Z3k/l] State chips — hidden when count = 0. */}
       <FilterChips spec={query.spec} onClear={query.clearFilters} onUpdate={query.updateSpec} />
@@ -243,6 +218,10 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
         spec={query.spec}
         onApply={query.updateSpec}
       />
+
+      {/* §12.4 [Aplicar à lista ▾] — lazy, so its `lists_list` read only
+          happens when the human actually opens the picker. */}
+      {applyOpen ? <ApplyToList spec={query.spec} onClose={() => setApplyOpen(false)} /> : null}
     </div>
   )
 }
