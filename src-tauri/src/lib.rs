@@ -30,6 +30,14 @@ pub fn run() {
         // everything else in the app stays in-app per §19.1.
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
+        // c19: the §11.6 vault grid is a gated surface, so its tiles are served
+        // through a custom scheme whose handler re-checks the vault session on
+        // every request (C6) — unlike the asset scope, which cannot be closed
+        // again once opened (see `commands::vault::vault_thumb_protocol`).
+        .register_asynchronous_uri_scheme_protocol(
+            commands::vault::VAULT_THUMB_SCHEME,
+            commands::vault::vault_thumb_protocol,
+        )
         // c10: the webview may read `Thumbnails/` through the asset protocol,
         // and nothing else. The root is known at boot (§5.5), so this is where
         // the grant happens; `[Recalcular Raiz]` re-grants it (commands/settings).

@@ -176,6 +176,23 @@ pub fn lock(session: &mut VaultSession) {
     session.lock();
 }
 
+/// §12.5.2 / §7.10 c19 decision 12 — **hiding needs no password.** Putting a file
+/// away is a write into the vault, not a look at what is inside it, so it must
+/// not be gated on the session (human, 2026-10-17: "colocar mídia no oculto não
+/// deveria pedir senha; só ver que ela está oculta deveria pedir"). Only reading
+/// the hidden set (the §11.6 grid, `vault_unhide`) stays behind the session.
+///
+/// It does, however, require the vault to **exist**: without a `vault_config` row
+/// the bytes would land in a `.vault/` that no password could ever open. So the
+/// hide commands assert configuration, where they used to assert unlock.
+pub fn ensure_configured(pool: &SqlitePool) -> Result<(), VaultError> {
+    if db::vault_config_get(pool)?.is_some() {
+        Ok(())
+    } else {
+        Err(VaultError::NotConfigured)
+    }
+}
+
 /// §12.5.2 — hide the named items. Returns how many were actually moved (ids
 /// that are unknown, already hidden, or whose original has vanished are skipped,
 /// so one dead row cannot abort a batch).
@@ -668,6 +685,23 @@ mod tests {
             Err(VaultError::WeakPassword)
         ));
         assert!(db::vault_config_get(&pool).unwrap().is_none());
+    }
+
+    #[test]
+    fn ensure_configured_gates_on_setup_not_on_the_session() {
+        // §7.10 c19 decision 12: hiding is allowed while locked, so the guard is
+        // "is there a vault?" — the session never enters the picture.
+        let dir = root();
+        let resolver = resolver(dir.path());
+        let pool = open(&resolver);
+
+        assert!(matches!(
+            ensure_configured(&pool),
+            Err(VaultError::NotConfigured)
+        ));
+
+        setup(&pool, "senha-forte").unwrap();
+        ensure_configured(&pool).expect("configured vault: hiding is allowed");
     }
 
     #[test]

@@ -11,10 +11,18 @@ export function StateRegion<T>({
   stage,
   ideal,
   skeletonCount = 12,
+  empty,
 }: {
   stage: StageInput<T>
   ideal: ReactNode
   skeletonCount?: number
+  /**
+   * The empty branch's copy. Defaults to the media copy; the §11.6 Cofre passes
+   * its own, because "Esta pasta está vazia / Importe mídia para começar" is a
+   * lie for a vault — you do not import *into* it, you hide things out of the
+   * gallery (§7.10 c19 decision 13).
+   */
+  empty?: { title: string; cta: string }
 }) {
   const { t } = useI18n()
   const state = useStateMachine(stage)
@@ -44,8 +52,8 @@ export function StateRegion<T>({
   if (state === 'empty') {
     return (
       <div className="state-region" data-state="empty">
-        <p className="md-empty">{t('state.empty')}</p>
-        <p className="md-empty__cta">{t('state.emptyCta')}</p>
+        <p className="md-empty">{empty ? empty.title : t('state.empty')}</p>
+        <p className="md-empty__cta">{empty ? empty.cta : t('state.emptyCta')}</p>
       </div>
     )
   }

@@ -56,17 +56,32 @@ export function MediaGrid({
   items,
   root,
   onOpen,
+  onContext,
   selectionMode,
   selection,
   navEnabled,
+  thumbSrc,
 }: {
   items: MediaDto[]
   root: string | null
   onOpen: (id: string) => void
+  /**
+   * c19 (2026-10-17): the tile context menu (right-click), mirrored from the
+   * frozen mockup's `#ctxmenu`. Absent in the §11.6 vault grid, where the
+   * mockup also suppresses it (`S.view === "vault"`).
+   */
+  onContext?: (item: MediaDto, event: ReactMouseEvent) => void
   selectionMode: boolean
   selection: ReturnType<typeof useSelection>
   /** False while the lightbox is up: `←/→` then belong to the overlay, not the grid. */
   navEnabled: boolean
+  /**
+   * c19: the tile source resolver. Defaults to the `Thumbnails/`-scoped asset
+   * protocol (§10.6.5); the §11.6 vault grid passes `vaultThumbUrl`, because a
+   * vault row's thumbnail lives under `.vault/thumbs/` and must go through the
+   * session-gated `wolfsvault` scheme instead. `hi` is the hover (400px) slot.
+   */
+  thumbSrc?: (item: MediaDto, hi: boolean) => string
 }) {
   const { selected } = selection
   const handleClick = useTileClick({ items, selectionMode, selection })
@@ -77,11 +92,13 @@ export function MediaGrid({
         items={items}
         root={root}
         onOpen={onOpen}
+        onContext={onContext}
         selected={selected}
         handleClick={handleClick}
         onToggle={selection.toggle}
         selection={selection}
         navEnabled={navEnabled}
+        thumbSrc={thumbSrc}
       />
     )
   }
@@ -91,13 +108,23 @@ export function MediaGrid({
       items={items}
       root={root}
       onOpen={onOpen}
+      onContext={onContext}
       selected={selected}
       handleClick={handleClick}
       onToggle={selection.toggle}
       selection={selection}
       navEnabled={navEnabled}
+      thumbSrc={thumbSrc}
     />
   )
+}
+
+/**
+ * The default tile source: the `Thumbnails/`-scoped asset protocol. Extracted so
+ * both grid variants and the vault override agree on the hover (400px) slot.
+ */
+function defaultThumbSrc(root: string | null, item: MediaDto, hi: boolean): string {
+  return thumbUrl(root, hi ? item.thumb400 : item.thumb200)
 }
 
 /** The Explorer click map, shared by both grid variants. */
@@ -268,20 +295,24 @@ function PlainGrid({
   items,
   root,
   onOpen,
+  onContext,
   selected,
   handleClick,
   onToggle,
   selection,
   navEnabled,
+  thumbSrc,
 }: {
   items: MediaDto[]
   root: string | null
   onOpen: (id: string) => void
+  onContext?: (item: MediaDto, event: ReactMouseEvent) => void
   selected: ReadonlySet<string>
   handleClick: (index: number, event: ReactMouseEvent) => void
   onToggle: (id: string) => void
   selection: ReturnType<typeof useSelection>
   navEnabled: boolean
+  thumbSrc?: (item: MediaDto, hi: boolean) => string
 }) {
   const { containerRef, onKeyDown } = useKeyboardNav({
     items,
@@ -289,6 +320,7 @@ function PlainGrid({
     selection,
     navEnabled,
   })
+  const resolve = thumbSrc ?? ((item: MediaDto, hi: boolean) => defaultThumbSrc(root, item, hi))
 
   return (
     <div ref={containerRef} className="media-grid" data-testid="media-grid" onKeyDown={onKeyDown}>
@@ -297,11 +329,12 @@ function PlainGrid({
           key={item.id}
           item={item}
           index={index}
-          root={root}
+          thumbSrc={resolve}
           selected={selected.has(item.id)}
           onClick={(event) => handleClick(index, event)}
           onOpen={() => onOpen(item.id)}
           onToggle={() => onToggle(item.id)}
+          onContext={onContext}
         />
       ))}
     </div>
@@ -333,20 +366,24 @@ function VirtualGrid({
   items,
   root,
   onOpen,
+  onContext,
   selected,
   handleClick,
   onToggle,
   selection,
   navEnabled,
+  thumbSrc,
 }: {
   items: MediaDto[]
   root: string | null
   onOpen: (id: string) => void
+  onContext?: (item: MediaDto, event: ReactMouseEvent) => void
   selected: ReadonlySet<string>
   handleClick: (index: number, event: ReactMouseEvent) => void
   onToggle: (id: string) => void
   selection: ReturnType<typeof useSelection>
   navEnabled: boolean
+  thumbSrc?: (item: MediaDto, hi: boolean) => string
 }) {
   const { containerRef, onKeyDown, pendingFocus } = useKeyboardNav({
     items,
@@ -354,6 +391,7 @@ function VirtualGrid({
     selection,
     navEnabled,
   })
+  const resolve = thumbSrc ?? ((item: MediaDto, hi: boolean) => defaultThumbSrc(root, item, hi))
   const [width, setWidth] = useState(0)
 
   // The row height follows the column width: the tile is a square image plus a
@@ -429,11 +467,12 @@ function VirtualGrid({
                     key={item.id}
                     item={item}
                     index={index}
-                    root={root}
+                    thumbSrc={resolve}
                     selected={selected.has(item.id)}
                     onClick={(event) => handleClick(index, event)}
                     onOpen={() => onOpen(item.id)}
                     onToggle={() => onToggle(item.id)}
+                    onContext={onContext}
                   />
                 )
               })}
@@ -448,26 +487,29 @@ function VirtualGrid({
 function MediaTile({
   item,
   index,
-  root,
+  thumbSrc,
   selected,
   onClick,
   onOpen,
   onToggle,
+  onContext,
 }: {
   item: MediaDto
   index: number
-  root: string | null
+  /** c19: resolves the tile source; the vault grid swaps in `vaultThumbUrl`. */
+  thumbSrc: (item: MediaDto, hi: boolean) => string
   selected: boolean
   onClick: (event: ReactMouseEvent) => void
   onOpen: () => void
   onToggle: () => void
+  onContext?: (item: MediaDto, event: ReactMouseEvent) => void
 }) {
   const { t } = useI18n()
   // §10.6.5 LQIP: the 200px WebP shows first, hover swaps in the 400px one
   // (§6.7 — both slots are already on disk, so this is a second load, never a
   // rescale).
   const [hovered, setHovered] = useState(false)
-  const src = thumbUrl(root, hovered ? item.thumb400 : item.thumb200)
+  const src = thumbSrc(item, hovered)
 
   return (
     <article
@@ -476,6 +518,14 @@ function MediaTile({
       data-index={index}
       onClick={onClick}
       onDoubleClick={onOpen}
+      onContextMenu={(e) => {
+        // c19: only the Mídia grid opens the context menu (the mockup suppresses
+        // it in the vault view); a consumer that passes no `onContext` keeps the
+        // browser's own menu.
+        if (!onContext) return
+        e.preventDefault()
+        onContext(item, e)
+      }}
       onKeyDown={(e) => {
         // Explorer keyboard on a tile: Enter opens, Space toggles it (which the
         // window-level Space binding then leaves alone through its I-beam guard).

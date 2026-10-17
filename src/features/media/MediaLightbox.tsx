@@ -8,6 +8,17 @@ import type { MediaDto } from '../../types/api'
 import { mediaUrl, thumbUrl } from './assetUrl'
 
 /**
+ * The root-relative `Media/...` folder that contains this media, or `null` at
+ * the root (nothing to hide). `vault_hide_folder` addresses a folder, not an
+ * id, so `[C-4j]`'s folder sibling has to hand it the parent path (§12.5.6).
+ */
+function parentFolder(relativePath: string): string | null {
+  const normalized = relativePath.replace(/\\/g, '/')
+  const slash = normalized.lastIndexOf('/')
+  return slash > 0 ? normalized.slice(0, slash) : null
+}
+
+/**
  * §11.4 `MediaLightbox` — the media detail overlay.
  *
  * Shows the 400px preview, filename, metadata table, and location. Keyboard:
@@ -30,12 +41,24 @@ export function MediaLightbox({
   onClose,
   onPrev,
   onNext,
+  vault,
 }: {
   id: string
   root: string | null
   onClose: () => void
   onPrev?: () => void
   onNext?: () => void
+  /**
+   * §11.6 `[C-4j Ocultar no cofre]` (+ the folder-hide sibling the human asked
+   * for, 2026-10-15). The controls are rendered only when the vault is
+   * configured; clicking while locked routes to the gate through the shell's
+   * bridge (`vault.onHide`).
+   */
+  vault?: {
+    configured: boolean
+    onHide: (id: string) => void
+    onHideFolder: (folder: string) => void
+  }
 }) {
   const { t } = useI18n()
   const { pushError } = useToast()
@@ -200,6 +223,31 @@ export function MediaLightbox({
             <button type="button" className="md-btn md-btn--tonal" onClick={handleReveal}>
               {t('media.openFolder')}
             </button>
+            {vault?.configured ? (
+              <>
+                <button
+                  type="button"
+                  className="md-btn md-btn--tonal"
+                  data-testid="c-4j-hide"
+                  onClick={() => vault.onHide(data.id)}
+                >
+                  {t('media.hideToVault')}
+                </button>
+                {parentFolder(data.relativePath) ? (
+                  <button
+                    type="button"
+                    className="md-btn md-btn--text"
+                    data-testid="c-4j-hide-folder"
+                    onClick={() => {
+                      const folder = parentFolder(data.relativePath)
+                      if (folder) vault.onHideFolder(folder)
+                    }}
+                  >
+                    {t('media.hideFolder')}
+                  </button>
+                ) : null}
+              </>
+            ) : null}
             <button type="button" className="md-btn md-btn--text" onClick={onClose}>
               {t('common.close')}
             </button>

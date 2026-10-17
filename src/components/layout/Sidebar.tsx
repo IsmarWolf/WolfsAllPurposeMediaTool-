@@ -20,12 +20,13 @@ export function Sidebar({
   route,
   onNavigate,
   mediaCount,
-  vaultLocked,
+  vaultState,
 }: {
   route: Route
   onNavigate: (route: Route) => void
   mediaCount: number | null
-  vaultLocked: boolean
+  /** §11.6 live state: grey = unconfigured, green = unlocked, red = locked. */
+  vaultState: 'unconfigured' | 'locked' | 'unlocked'
 }) {
   const { t } = useI18n()
 
@@ -89,8 +90,8 @@ export function Sidebar({
           </span>
           <span>{t('nav.vault')}</span>
           <span
-            className={`zone2__lock-dot${vaultLocked ? ' zone2__lock-dot--locked' : ''}`}
-            aria-label={vaultLocked ? t('vault.locked') : t('vault.unlocked')}
+            className={`zone2__lock-dot zone2__lock-dot--${vaultState}`}
+            aria-label={t(`vault.${vaultState}`)}
           />
         </button>
       </div>

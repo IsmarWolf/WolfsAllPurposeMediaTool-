@@ -21,6 +21,12 @@
   --md-on-error-rgb: 255 255 255;
   --md-error-ctr-rgb: 249 222 220;
   --md-on-error-ctr-rgb: 65 14 11;
+  /* c19: PLAN §11.6 requires a green "unlocked" state for the Cofre nav dot
+     (grey = unconfigured, green = unlocked, red-ish = locked). MD3 baseline has
+     no success role, so this is the one added role — a Material green 700 that
+     reads as "open" against the #6750A4 surface without competing with primary. */
+  --md-success-rgb: 46 125 50;
+  --md-on-success-rgb: 255 255 255;
 
   --md-bg: rgb(var(--md-bg-rgb));
   --md-fg: rgb(var(--md-fg-rgb));
@@ -44,6 +50,8 @@
   --md-on-error: rgb(var(--md-on-error-rgb));
   --md-error-ctr: rgb(var(--md-error-ctr-rgb));
   --md-on-error-ctr: rgb(var(--md-on-error-ctr-rgb));
+  --md-success: rgb(var(--md-success-rgb));
+  --md-on-success: rgb(var(--md-on-success-rgb));
   --md-scrim: rgba(0, 0, 0, 0.32);
   --md-glass-bg: rgba(255, 255, 255, 0.1);
   --md-glass-border: rgba(255, 255, 255, 0.1);

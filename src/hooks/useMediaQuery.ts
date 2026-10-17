@@ -40,8 +40,17 @@ export const DEFAULT_FILTER_SPEC: FilterSpec = DEFAULT_SPEC
  * and any `wolfs://db-changed` — an ingest or a scan elsewhere in the app —
  * re-runs the current spec, so the badge and the grid catch up on their own.
  */
-export function useMediaQuery() {
-  const [spec, setSpec] = useState<FilterSpec>(DEFAULT_SPEC)
+export function useMediaQuery(initial?: Partial<FilterSpec>) {
+  // The §11.6 vault grid is the only caller that passes `initial` (`scope: Vault`):
+  // it is the same query, filters and paging as the gallery, seeded on the hidden
+  // scope so the two pages share one code path (C6: the scope is explicit here,
+  // never inferred). Captured once — a fresh inline object each render must not
+  // reset the spec.
+  // The ref is read only from the mount effect below, never during render; the
+  // state computes the same merged spec once, so both agree without touching a
+  // ref in render (react-compiler rule).
+  const initialSpec = useRef<FilterSpec>({ ...DEFAULT_SPEC, ...initial })
+  const [spec, setSpec] = useState<FilterSpec>(() => ({ ...DEFAULT_SPEC, ...initial }))
   const [data, setData] = useState<MediaQueryDto | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -82,7 +91,7 @@ export function useMediaQuery() {
   // First read on mount — same "one read per mount" contract as useAsync.
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect
-    void run(DEFAULT_SPEC)
+    void run(initialSpec.current)
   }, [run])
 
   const updateSpec = useCallback(

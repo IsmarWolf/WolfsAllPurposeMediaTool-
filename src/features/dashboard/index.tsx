@@ -20,10 +20,11 @@ type Props = {
  * §11.1 Dashboard — the telemetry home (C16: no meter, no filter presets, no
  * live data in the sidebar; all of it lives here).
  *
- * Numbers only, per the c8 amendment: C-1a..1d stat cards, C-1f vault mini-card,
- * C-1h primary CTA, C-1j the QA-only state-machine triggers, C-1k the full-width
- * storage & system card. The old C-1i "Conexões rápidas" card moved to
- * Backup → Disco local (human-confirmed 2026-09-30).
+ * Numbers only, per the c8 amendment: C-1a..1d stat cards, C-1h primary CTA,
+ * C-1j the QA-only state-machine triggers, C-1k the full-width storage & system
+ * card. The old C-1i "Conexões rápidas" card moved to Backup → Disco local
+ * (human-confirmed 2026-09-30); the C-1f vault mini-card was removed
+ * (human-confirmed 2026-10-17 — the Cofre lives on its own nav item, not here).
  */
 export function DashboardScreen({ stats, loading, error, onRetry, resolve, onNavigate }: Props) {
   const { t } = useI18n()
@@ -68,52 +69,38 @@ export function DashboardScreen({ stats, loading, error, onRetry, resolve, onNav
         </section>
       ) : null}
 
-      <div className="dash-cols">
-        <div className="dash-cols__main">
-          {error ? (
-            <ErrorCard messageKey="error.E_DB" onRetry={onRetry} />
-          ) : (
-            <div className="dash-stats" data-testid="c-1a-stats">
-              <StatCard
-                label={t('dash.totalItems')}
-                value={stats ? formatCount(stats.totalItems) : null}
-                hint={stats ? t('dash.totalItemsHint') : null}
-                busy={loading}
-              />
-              <StatCard
-                label={t('dash.images')}
-                value={stats ? formatCount(stats.images) : null}
-                hint={stats ? formatBytes(stats.imagesBytes) : null}
-                busy={loading}
-              />
-              <StatCard
-                label={t('dash.videos')}
-                value={stats ? formatCount(stats.videos) : null}
-                hint={stats ? formatBytes(stats.videosBytes) : null}
-                busy={loading}
-              />
-              {/* C-7: "sem metadados" = no capture date AND no GPS. */}
-              <StatCard
-                label={t('dash.noMetadata')}
-                value={stats ? formatCount(stats.noMetadata) : null}
-                hint={t('dash.noMetadataHint')}
-                busy={loading}
-                onClick={() => onNavigate('media')}
-              />
-            </div>
-          )}
+      {error ? (
+        <ErrorCard messageKey="error.E_DB" onRetry={onRetry} />
+      ) : (
+        <div className="dash-stats" data-testid="c-1a-stats">
+          <StatCard
+            label={t('dash.totalItems')}
+            value={stats ? formatCount(stats.totalItems) : null}
+            hint={stats ? t('dash.totalItemsHint') : null}
+            busy={loading}
+          />
+          <StatCard
+            label={t('dash.images')}
+            value={stats ? formatCount(stats.images) : null}
+            hint={stats ? formatBytes(stats.imagesBytes) : null}
+            busy={loading}
+          />
+          <StatCard
+            label={t('dash.videos')}
+            value={stats ? formatCount(stats.videos) : null}
+            hint={stats ? formatBytes(stats.videosBytes) : null}
+            busy={loading}
+          />
+          {/* C-7: "sem metadados" = no capture date AND no GPS. */}
+          <StatCard
+            label={t('dash.noMetadata')}
+            value={stats ? formatCount(stats.noMetadata) : null}
+            hint={t('dash.noMetadataHint')}
+            busy={loading}
+            onClick={() => onNavigate('media')}
+          />
         </div>
-
-        <div className="dash-cols__side">
-          <section className="md-card" data-testid="c-1f-vault">
-            <h2>{t('dash.vaultTitle')}</h2>
-            <p>{t('dash.vaultLocked')}</p>
-            <Button variant="tonal" onClick={() => onNavigate('vault')}>
-              {t('dash.vaultOpen')}
-            </Button>
-          </section>
-        </div>
-      </div>
+      )}
 
       {/* C-1k — full-width, below dash-cols: the meter, the ffmpeg badge, the
           resolved root path. This is the only place telemetry lives. */}

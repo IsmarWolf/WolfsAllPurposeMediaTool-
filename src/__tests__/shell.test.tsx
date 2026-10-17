@@ -1981,3 +1981,445 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
     })
   })
 })
+
+describe('Cofre (c19) — gate, mode and the hide actions (§11.6/§11.8/§11.9, C6)', () => {
+  const UNCONFIGURED = { configured: false, unlocked: false, hasRecoveryHint: false }
+  const LOCKED = { configured: true, unlocked: false, hasRecoveryHint: true }
+  const UNLOCKED = { configured: true, unlocked: true, hasRecoveryHint: true }
+
+  /** A hidden row: its thumbnail lives under `.vault/thumbs/` (both slots equal). */
+  const VAULT_ITEM = {
+    id: 'v1',
+    relativePath: 'Media/PC/2024/03/IMG_h.jpg',
+    thumb200: '.vault/thumbs/h1.webp',
+    thumb400: '.vault/thumbs/h1.webp',
+    fileHash: 'h1',
+    fileSize: 1000,
+    fileType: 'image',
+    capturedAt: '2024-03-15T10:00:00',
+    hasMetadata: true,
+    deviceName: 'PC',
+    isHidden: true,
+    location: null,
+  }
+
+  function withVault(status: typeof UNCONFIGURED) {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return status
+      return defaultMock(command, args)
+    })
+  }
+
+  function navItem(container: HTMLElement, label: string): HTMLElement {
+    return [...container.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes(label),
+    ) as HTMLElement
+  }
+
+  async function gotoVault() {
+    const { container } = await renderShell()
+    fireEvent.click(navItem(container, 'Cofre'))
+    return { container }
+  }
+
+  async function gotoMedia() {
+    const { container } = await renderShell()
+    fireEvent.click(navItem(container, 'Mídia'))
+    return { container }
+  }
+
+  /** Broadcast `wolfs://vault` — the §9.2 signal every vault command emits. */
+  async function emitVault() {
+    const { listen } = await import('@tauri-apps/api/event')
+    const handlers = vi
+      .mocked(listen)
+      .mock.calls.filter(([channel]) => channel === 'wolfs://vault')
+      .map(([, handler]) => handler as (event: { payload: unknown }) => void)
+    for (const handler of handlers) handler({ payload: null })
+  }
+
+  it('paints the Cofre dot grey, then red, then green — live state, not a guess (§11.6)', async () => {
+    withVault(UNCONFIGURED)
+    const { container } = await renderShell()
+    expect(container.querySelector('.zone2__lock-dot')?.className).toContain(
+      'zone2__lock-dot--unconfigured',
+    )
+
+    withVault(LOCKED)
+    await act(async () => {
+      await emitVault()
+    })
+    expect(container.querySelector('.zone2__lock-dot')?.className).toContain(
+      'zone2__lock-dot--locked',
+    )
+
+    withVault(UNLOCKED)
+    await act(async () => {
+      await emitVault()
+    })
+    expect(container.querySelector('.zone2__lock-dot')?.className).toContain(
+      'zone2__lock-dot--unlocked',
+    )
+  })
+
+  it('the first-run gate sets a password and shows the one-time recovery key (§11.6 [C-6d/e])', async () => {
+    const KEY = 'ABCD2345EFGH6789JKMN2345'
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNCONFIGURED
+      if (command === 'vault_setup') return KEY
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    expect(await screen.findByTestId('vault-setup')).not.toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'senha-forte-1' } })
+    fireEvent.change(screen.getByLabelText('Repita a senha'), {
+      target: { value: 'senha-forte-1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_setup')
+      expect(call?.[1]).toEqual({ password: 'senha-forte-1' })
+    })
+    const card = await screen.findByTestId('vault-recovery-key')
+    expect(card.textContent).toContain(KEY)
+  })
+
+  it('a too-short password is refused inline and never reaches the backend', async () => {
+    withVault(UNCONFIGURED)
+    await gotoVault()
+    await screen.findByTestId('vault-setup')
+
+    fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'abc' } })
+    fireEvent.change(screen.getByLabelText('Repita a senha'), { target: { value: 'abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+
+    expect(screen.getByRole('alert').textContent).toBe('A senha precisa ter ao menos 8 caracteres.')
+    expect(invokeMock.mock.calls.find(([command]) => command === 'vault_setup')).toBeUndefined()
+  })
+
+  it('the locked gate keeps a wrong password inline — E_AUTH, never a toast (§11.6)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return LOCKED
+      if (command === 'vault_unlock') throw { code: 'E_AUTH', message: 'senha incorreta' }
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-locked')
+
+    fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'errada' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Desbloquear' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe('Acesso negado. Verifique a autorização do cofre.')
+    // §8.2: a wrong password is the one error that must NOT become a toast.
+    expect(document.querySelector('.md-toast')).toBeNull()
+  })
+
+  it('a correct password unlocks and the mode grid reads scope: Vault (§11.6 [C-6b/g], C6)', async () => {
+    let status = LOCKED
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return status
+      if (command === 'vault_unlock') {
+        status = UNLOCKED
+        return null
+      }
+      if (command === 'media_query') {
+        return { items: [VAULT_ITEM], total: 1, hasMore: false }
+      }
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-locked')
+    fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'certa' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Desbloquear' }))
+
+    await screen.findByTestId('vault-mode')
+    const query = invokeMock.mock.calls.find(([command]) => command === 'media_query')
+    const spec = (query?.[1] as { spec: { scope: string } } | undefined)?.spec
+    expect(spec?.scope).toBe('vault')
+    expect(await screen.findAllByTestId('media-tile')).toHaveLength(1)
+  })
+
+  it('locking again goes through vault_lock (§11.6 [C-6j])', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'vault_lock') return null
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-mode')
+    fireEvent.click(screen.getByTestId('c-6j-lock'))
+
+    await waitFor(() => {
+      expect(invokeMock.mock.calls.find(([command]) => command === 'vault_lock')).toBeDefined()
+    })
+  })
+
+  it('[C-6h Restaurar] sends the selected hidden ids to vault_unhide (§11.6)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') {
+        return { items: [VAULT_ITEM], total: 1, hasMore: false }
+      }
+      if (command === 'vault_unhide') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-mode')
+    fireEvent.click((await screen.findAllByTestId('media-tile'))[0])
+    fireEvent.click(screen.getByTestId('c-6h-restore'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_unhide')
+      expect(call?.[1]).toEqual({ ids: ['v1'] })
+    })
+  })
+
+  it('[C-6i Apagar def.] asks first, then removes the rows — never before (§11.6, C7)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') {
+        return { items: [VAULT_ITEM], total: 1, hasMore: false }
+      }
+      if (command === 'media_remove') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-mode')
+    fireEvent.click((await screen.findAllByTestId('media-tile'))[0])
+    fireEvent.click(screen.getByTestId('c-6i-delete'))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(invokeMock.mock.calls.find(([command]) => command === 'media_remove')).toBeUndefined()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apagar def.' }))
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_remove')
+      expect(call?.[1]).toEqual({ ids: ['v1'] })
+    })
+  })
+
+  it('[C-4j] hides the open media from the Mídia lightbox (§11.6 hide actions)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_hide') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.doubleClick(tiles[0])
+    fireEvent.click(await screen.findByTestId('c-4j-hide'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_hide')
+      expect(call?.[1]).toEqual({ ids: ['g1'] })
+    })
+  })
+
+  it('[C-4j] also offers hiding the whole parent folder, by root-relative path (§11.6)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_hide_folder') return 3
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.doubleClick(tiles[0])
+    fireEvent.click(await screen.findByTestId('c-4j-hide-folder'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_hide_folder')
+      expect(call?.[1]).toEqual({ folder: 'Media/PC/2024/03' })
+    })
+  })
+
+  it('[Z5d] hides the whole selection from the bulk toolbar when configured (§11.9)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_hide') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.click(tiles[0])
+    fireEvent.click(await screen.findByTestId('z5d-hide'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_hide')
+      expect(call?.[1]).toEqual({ ids: ['g1'] })
+    })
+  })
+
+  it('renders no hide control at all when the vault is not configured (§11.9)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNCONFIGURED
+      if (command === 'media_query') return MEDIA_PAGE
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.doubleClick(tiles[0])
+    await screen.findByRole('dialog', { name: 'Visualização de mídia' })
+    expect(screen.queryByTestId('c-4j-hide')).toBeNull()
+  })
+
+  it('hiding while locked still hides — no password, no gate (§7.10 c19 decision 12)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return LOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_hide') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    const tiles = await screen.findAllByTestId('media-tile')
+    fireEvent.doubleClick(tiles[0])
+    fireEvent.click(await screen.findByTestId('c-4j-hide'))
+
+    // Putting a file away is a write, not a look: it goes through while locked.
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_hide')
+      expect(call?.[1]).toEqual({ ids: ['g1'] })
+    })
+    // And the human is *not* dragged to the gate for it.
+    expect(screen.queryByTestId('vault-locked')).toBeNull()
+  })
+
+  it('the Cofre route never shows the Mídia bulk toolbar (Zone 5 belongs to the gallery)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      return defaultMock(command, args)
+    })
+
+    const { container } = await gotoMedia()
+    fireEvent.click((await screen.findAllByTestId('media-tile'))[0])
+    expect(container.querySelector('.zone5')).not.toBeNull()
+
+    fireEvent.click(navItem(container, 'Cofre'))
+    await screen.findByTestId('vault-mode')
+    expect(container.querySelector('.zone5')).toBeNull()
+  })
+
+  it('re-locks the vault when leaving the Cofre route — auto-lock (§12.5.7)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_lock') return null
+      return defaultMock(command, args)
+    })
+
+    const { container } = await gotoVault()
+    await screen.findByTestId('vault-mode')
+    // Still on the guarded surface: nothing has locked yet.
+    expect(invokeMock.mock.calls.find(([c]) => c === 'vault_lock')).toBeUndefined()
+
+    fireEvent.click(navItem(container, 'Mídia'))
+    await waitFor(() => {
+      expect(invokeMock.mock.calls.find(([c]) => c === 'vault_lock')).toBeDefined()
+    })
+  })
+
+  it('does not lock when the leave is not from the Cofre (no stray vault_lock)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_lock') return null
+      return defaultMock(command, args)
+    })
+
+    const { container } = await gotoMedia()
+    fireEvent.click(navItem(container, 'Ajustes'))
+    expect(invokeMock.mock.calls.find(([c]) => c === 'vault_lock')).toBeUndefined()
+  })
+
+  it('the tile context menu hides the clicked media when configured (§10.6.2)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      if (command === 'vault_hide') return 1
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    fireEvent.contextMenu((await screen.findAllByTestId('media-tile'))[0])
+    const menu = await screen.findByTestId('media-context-menu')
+    fireEvent.click(within(menu).getByTestId('ctx-hide'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'vault_hide')
+      expect(call?.[1]).toEqual({ ids: ['g1'] })
+    })
+  })
+
+  it('the context menu opens the lightbox through "Ver metadados" (§10.6.2)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return MEDIA_PAGE
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    fireEvent.contextMenu((await screen.findAllByTestId('media-tile'))[0])
+    const menu = await screen.findByTestId('media-context-menu')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Ver metadados' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Visualização de mídia' })).not.toBeNull()
+  })
+
+  it('the context menu omits "Ocultar no cofre" when the vault is not configured (§10.6.2)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNCONFIGURED
+      if (command === 'media_query') return MEDIA_PAGE
+      return defaultMock(command, args)
+    })
+
+    await gotoMedia()
+    fireEvent.contextMenu((await screen.findAllByTestId('media-tile'))[0])
+    const menu = await screen.findByTestId('media-context-menu')
+    expect(within(menu).queryByTestId('ctx-hide')).toBeNull()
+  })
+
+  it('the Cofre grid never opens the media context menu (mockup: no ctx in vault view)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') {
+        return { items: [VAULT_ITEM], total: 1, hasMore: false }
+      }
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-mode')
+    fireEvent.contextMenu((await screen.findAllByTestId('media-tile'))[0])
+    expect(screen.queryByTestId('media-context-menu')).toBeNull()
+  })
+
+  it('the empty Cofre reads as "nada oculto", never "importe mídia" (§7.10 c19 decision 13)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'vault_status') return UNLOCKED
+      if (command === 'media_query') return { items: [], total: 0, hasMore: false }
+      return defaultMock(command, args)
+    })
+
+    await gotoVault()
+    await screen.findByTestId('vault-mode')
+    expect(await screen.findByText('Nenhuma mídia oculta.')).not.toBeNull()
+    expect(screen.queryByText('Importe mídia para começar.')).toBeNull()
+  })
+})

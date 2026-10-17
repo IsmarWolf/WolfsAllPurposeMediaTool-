@@ -41,8 +41,36 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 /** §8.1 `stats_get` — Dashboard stat cards + Zone 4 summary. */
 export const statsGet = () => call<StatsDto>('stats_get')
 
-/** §8.1 `vault_status` — the C-1f vault mini-card. */
+/** §8.1 `vault_status` — the Cofre gate and nav dot (§11.6). */
 export const vaultStatus = () => call<VaultStatusDto>('vault_status')
+
+/* --------------------------------------------------- vault §8.1/c18 (UI in c19) */
+
+/**
+ * §8.1 `vault_setup` (c19) — first-run configuration. Resolves the **one-time**
+ * 24-char recovery key (§12.5.1): the backend shows it once and never returns it
+ * again, so the gate must make the user copy or download it before continuing.
+ */
+export const vaultSetup = (password: string) => call<string>('vault_setup', { password })
+
+/** §8.1 `vault_unlock` (c19) — `E_AUTH` on a wrong password (inline, not a toast). */
+export const vaultUnlock = (password: string) => call<void>('vault_unlock', { password })
+
+/** §8.1 `vault_lock` (c19) — idempotent. */
+export const vaultLock = () => call<void>('vault_lock')
+
+/** §8.1 `vault_recover` (c19) — §11.6 `[C-6c Esqueci / perdi a chave]`. */
+export const vaultRecover = (recoveryKey: string) => call<void>('vault_recover', { recoveryKey })
+
+/** §8.1 `vault_hide` (c19) — moves rows to the vault (C6); resolves the count. */
+export const vaultHide = (ids: string[]) => call<number>('vault_hide', { ids })
+
+/** §8.1 `vault_hide_folder` (c18 amendment) — hides every media under a
+ *  root-relative `Media/...` folder; resolves the count. */
+export const vaultHideFolder = (folder: string) => call<number>('vault_hide_folder', { folder })
+
+/** §8.1 `vault_unhide` (c19) — §11.6 `[C-6h Restaurar]`; resolves the count. */
+export const vaultUnhide = (ids: string[]) => call<number>('vault_unhide', { ids })
 
 /** §8.1 `resolve_app_root` — diagnostic; Zone 1 `[Z1d]` and Settings → Origem. */
 export const resolveAppRoot = () => call<RootInfoDto>('resolve_app_root')

@@ -190,15 +190,22 @@
   background-color: var(--md-error-ctr);
 }
 
+/* §11.6 live vault state. Grey = unconfigured (the default), green = unlocked,
+   red-ish = locked. It must not depend on hover or focus — it is the one datum
+   Zone 2 is allowed to carry besides the Mídia count (C16). */
 .zone2__lock-dot {
   width: 8px;
   height: 8px;
   border-radius: var(--radius-pill);
-  background-color: var(--md-primary);
+  background-color: var(--md-outline);
+}
+
+.zone2__lock-dot--unlocked {
+  background-color: var(--md-success);
 }
 
 .zone2__lock-dot--locked {
-  background-color: var(--md-outline);
+  background-color: var(--md-error);
 }
 
 /* ---------------------------------------------------------------- Zone 3 */
@@ -776,20 +783,6 @@
 
 /* ---------------------------------------------------------------- misc */
 
-.dash-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: var(--space-card);
-  align-items: start;
-}
-
-.dash-cols__main,
-.dash-cols__side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-card);
-}
-
 .dash-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -930,9 +923,155 @@
   font-weight: 500;
 }
 
-.vault-gate__status {
+/* ------------------------------------------------------------ Cofre (c19, §11.6) */
+
+.vault-gate,
+.vault-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  align-self: flex-start;
+  width: 100%;
+  max-width: 640px;
+}
+
+.vault-gate h2,
+.vault-mode h2 {
   margin: 0;
+}
+
+.vault-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.vault-field .md-input {
+  width: 100%;
+}
+
+.vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* §12.5.1 strength meter — four segments + the word. Advisory only; the gate
+   still accepts any 8+ char password. */
+.vault-strength {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.vault-strength__seg {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background-color: var(--md-surface-ctr-high);
+  transition: background-color var(--dur-micro) var(--ease-emphasized);
+}
+
+.vault-strength__seg--on {
+  background-color: var(--md-primary);
+}
+
+.vault-strength__label {
+  min-width: 64px;
+  font-size: var(--text-label-s);
+  color: var(--md-on-surface-variant);
+}
+
+/* The one-time recovery key (§11.6 [C-6e]): its own monospace block, because it
+   is copied by hand and an ambiguous glyph would lose the vault. */
+.vault-recovery__key {
+  display: block;
+  padding: var(--space-md);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: var(--text-body-l);
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  background-color: var(--md-surface-ctr-low);
+  border-radius: var(--radius-md);
+}
+
+.vault-recover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--md-outline-ctr);
+}
+
+/* Wrong password: the input shakes once (§11.6) instead of a toast. */
+.vault-shake {
+  animation: vault-shake var(--dur-large) var(--ease-emphasized);
+}
+
+@keyframes vault-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-shake {
+    animation: none;
+  }
+}
+
+/* Unlocked surface (§11.6 [C-6f..j]): the banner + the grid toolbar, then the
+   grid itself. It is wider than a gate card — it holds a gallery. */
+.vault-mode {
+  max-width: none;
+}
+
+.vault-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-card);
+  color: var(--md-on-error-ctr);
+  background-color: var(--md-error-ctr);
+  border-radius: var(--radius-md);
+}
+
+.vault-banner__count {
+  font-size: var(--text-label-m);
+}
+
+.vault-banner__spacer,
+.vault-toolbar__spacer {
+  flex: 1;
+}
+
+.vault-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.vault-toolbar__count {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
 }
 
 /* ------------------------------------------------------- Disco local (c8, §11.3) */
@@ -1153,19 +1292,6 @@
     gap: var(--space-md);
     padding: var(--space-sm) var(--space-card);
   }
-
-  .dash-cols {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .dash-cols__side {
-    flex-direction: row;
-    flex-wrap: wrap;
-  }
-
-  .dash-cols__side > * {
-    flex: 1 1 260px;
-  }
 }
 
 @media (max-width: 1279px) {
@@ -1281,10 +1407,6 @@
 @media (max-width: 899px) {
   .dash-stats {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .dash-cols__side {
-    flex-direction: column;
   }
 
   .l1-row__label {
@@ -1721,6 +1843,42 @@ video.md-lightbox__image {
   gap: var(--space-sm);
   padding-top: var(--space-sm);
   border-top: 1px solid var(--md-outline);
+}
+
+/* ------------------------------------------------ context menu (c19) */
+
+/* §10.6.2 / mockup `#ctxmenu`: a MD3 menu surface, pinned at the click point
+   (the position is inline, because it is a viewport coordinate, not a layout
+   choice). The anchor, not the shell, owns open/close. */
+.md-ctxmenu {
+  position: fixed;
+  z-index: var(--z-modal);
+  min-width: 200px;
+  padding: 4px;
+  background-color: var(--md-surface-ctr-high);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-hover);
+}
+
+.md-ctxmenu__item {
+  display: block;
+  width: 100%;
+  min-height: var(--hit-target);
+  padding: 0 var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background-color: transparent;
+  color: var(--md-fg);
+  font: inherit;
+  font-size: var(--text-label-m);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease-emphasized);
+}
+
+.md-ctxmenu__item:hover,
+.md-ctxmenu__item:focus-visible {
+  background-color: var(--md-surface-ctr-low);
 }
 
 /* ------------------------------------------------- listas (§11.5) */

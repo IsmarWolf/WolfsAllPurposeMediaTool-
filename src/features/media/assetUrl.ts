@@ -28,6 +28,29 @@ export function mediaUrl(root: string | null | undefined, relative: string): str
   return scopedUrl(root, relative)
 }
 
+/**
+ * §11.6/c19 vault tiles. The asset protocol is never used for `.vault/`: its
+ * scope cannot be closed again once opened (Tauri v2 has no `forbid` removal),
+ * so a locked vault would keep serving tiles. Instead the backend registers a
+ * session-gated custom scheme (`wolfsvault`) that re-checks the vault session on
+ * **every** request — see `commands/vault.rs::vault_thumb_protocol`.
+ *
+ * Only the thumbnail's **file name** crosses over (`convertFileSrc` encodes it
+ * into the URL path); the handler accepts a single separator-free component and
+ * resolves it inside `.vault/thumbs/`. A locked vault (or a missing file) is the
+ * same empty string / blank tile as a not-yet-rendered gallery thumbnail.
+ */
+export function vaultThumbUrl(relative: string | null | undefined): string {
+  if (!relative) return ''
+  const name = relative.split(/[\\/]/).pop()
+  if (!name) return ''
+  try {
+    return convertFileSrc(name, 'wolfsvault')
+  } catch {
+    return ''
+  }
+}
+
 function scopedUrl(root: string | null | undefined, relative: string): string {
   if (!root || !relative) return ''
   const absolute = `${root.replace(/\\/g, '/').replace(/\/+$/, '')}/${relative.replace(/\\/g, '/')}`

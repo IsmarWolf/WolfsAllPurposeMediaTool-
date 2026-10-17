@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, type MouseEvent as ReactMouseEvent } from 'react'
 import { Button, PageHeader } from '../../components/ui'
 import { StateRegion } from '../../components/layout/StateRegion'
 import { useI18n } from '../../hooks/useContexts'
@@ -8,8 +8,9 @@ import { useSelection } from '../../hooks/useSelection'
 import { useShortcuts, type Shortcut } from '../../hooks/useShortcuts'
 import { formatCount } from '../../lib/format'
 import { resolveAppRoot } from '../../lib/ipc'
-import type { RootInfoDto } from '../../types/api'
+import type { MediaDto, RootInfoDto } from '../../types/api'
 import { MediaGrid } from './MediaGrid'
+import { MediaContextMenu, type ContextTarget } from './MediaContextMenu'
 import { MediaLightbox } from './MediaLightbox'
 import { FilterDrawer } from './FilterDrawer'
 import { FilterChips } from './FilterChips'
@@ -33,7 +34,18 @@ function focusedInteractive(): boolean {
  * (§10.6.5); the five-state machine (§10.6.4) drives the render. Selection is
  * the shell's (§12.6) so the Inspector + bulk bar follow the gallery.
  */
-export function MediaScreen({ selection }: { selection: ReturnType<typeof useSelection> }) {
+export function MediaScreen({
+  selection,
+  vault,
+}: {
+  selection: ReturnType<typeof useSelection>
+  /** §11.6 hide bridge from the shell: `[C-4j]` and the folder-hide action. */
+  vault: {
+    configured: boolean
+    onHide: (id: string) => void
+    onHideFolder: (folder: string) => void
+  }
+}) {
   const { t } = useI18n()
   const query = useMediaQuery()
   // c10: the asset scope is backend-side, but the URL needs the absolute root —
@@ -47,6 +59,9 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
   const [applyOpen, setApplyOpen] = useState(false)
+  // c19: the tile context menu (§10.6.2, mockup `#ctxmenu`). Closed by Esc /
+  // scroll / a click outside, and before any of its actions run.
+  const [ctx, setCtx] = useState<ContextTarget | null>(null)
 
   const items = query.data?.items ?? []
   const total = query.data?.total ?? 0
@@ -61,6 +76,11 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
     [items],
   )
   const closeLightbox = useCallback(() => setLightboxIndex(null), [])
+
+  const openContext = useCallback((item: MediaDto, event: ReactMouseEvent) => {
+    setCtx({ id: item.id, x: event.clientX, y: event.clientY })
+  }, [])
+  const closeContext = useCallback(() => setCtx(null), [])
 
   // [C-4e]/[C-4g] — absent at the ends of the page, so neither arrow is ever a
   // control that does nothing.
@@ -180,6 +200,7 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
             items={items}
             root={root}
             onOpen={openLightbox}
+            onContext={openContext}
             selectionMode={selectionMode}
             selection={selection}
             navEnabled={lightboxId === null}
@@ -208,6 +229,7 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
           onClose={closeLightbox}
           onPrev={prevItem}
           onNext={nextItem}
+          vault={vault}
         />
       ) : null}
 
@@ -222,6 +244,19 @@ export function MediaScreen({ selection }: { selection: ReturnType<typeof useSel
       {/* §12.4 [Aplicar à lista ▾] — lazy, so its `lists_list` read only
           happens when the human actually opens the picker. */}
       {applyOpen ? <ApplyToList spec={query.spec} onClose={() => setApplyOpen(false)} /> : null}
+
+      {/* §10.6.2 / mockup `#ctxmenu` — the tile right-click menu. Rendered above
+          the grid; `onHide` routes through the shell's hide bridge, so a locked
+          vault sends the human to the gate rather than silently failing. */}
+      {ctx ? (
+        <MediaContextMenu
+          target={ctx}
+          vaultConfigured={vault.configured}
+          onOpen={openLightbox}
+          onHide={vault.onHide}
+          onClose={closeContext}
+        />
+      ) : null}
     </div>
   )
 }

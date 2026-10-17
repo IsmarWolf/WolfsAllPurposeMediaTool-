@@ -8,6 +8,8 @@ import { TransferBar } from '../components/layout/TransferBar'
 import { useDashStats } from '../hooks/useTauriEvent'
 import { useInspector, useSelection } from '../hooks/useSelection'
 import { useShortcuts, type Shortcut } from '../hooks/useShortcuts'
+import { useI18n, useToast } from '../hooks/useContexts'
+import { useVaultActions, useVaultStatus } from '../hooks/useVault'
 import { resolveAppRoot } from '../lib/ipc'
 import { BackupScreen } from '../features/backup'
 import { DashboardScreen } from '../features/dashboard'
@@ -41,11 +43,78 @@ export function AppShell() {
 }
 
 function ShellBody() {
+  const { t } = useI18n()
+  const { push } = useToast()
   const [route, setRoute] = useState<Route>(DEFAULT_ROUTE)
   const selection = useSelection()
   const { data: stats, loading: statsLoading, error: statsError, rerun } = useDashStats()
+  const { status: vault } = useVaultStatus()
+  const { hide, hideFolder, lock } = useVaultActions()
 
-  const navigate = useCallback((next: Route) => setRoute(next), [])
+  // §11.6: entering the guarded space drops the shell selection, so the Mídia
+  // bulk bar / inspector selection can never appear over the Cofre.
+  // §12.5.7: leaving it re-locks the session. The route is the vault's only
+  // "exit", so this is where the auto-lock belongs — the `wolfsvault` scheme
+  // stops serving, in-flight/next opens re-gate, and the dot drops to red
+  // without a manual `[C-6j]`. `vault_lock` is idempotent (§8.1), so a leave
+  // while already locked is a harmless no-op.
+  const navigate = useCallback(
+    (next: Route) => {
+      if (next === 'vault') {
+        selection.clear()
+      } else if (route === 'vault' && vault?.unlocked) {
+        void lock()
+      }
+      setRoute(next)
+    },
+    [selection, route, vault, lock],
+  )
+
+  // §11.6: grey (unconfigured) until the status read lands, then the live state.
+  const vaultState: 'unconfigured' | 'locked' | 'unlocked' = !vault?.configured
+    ? 'unconfigured'
+    : vault.unlocked
+      ? 'unlocked'
+      : 'locked'
+
+  /**
+   * The §11.6 hide bridge shared by `[C-4j]`, `[Z4e]` and `[Z5d]`. Hiding is
+   * **not** gated on the session (§7.10 c19 decision 12, human 2026-10-17): the
+   * controls are what make the gate reachable, so an unconfigured vault routes
+   * the human to the first-run gate with a warn toast, but a *configured* vault
+   * hides without asking for the password — putting a file away is not a look at
+   * what is inside. Only reading the hidden set (the Cofre grid) requires unlock.
+   */
+  const requestHide = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return
+      if (!vault?.configured) {
+        push('warn', t('media.hideNotConfigured'))
+        navigate('vault')
+        return
+      }
+      const moved = await hide(ids)
+      if (moved === null) return
+      push('success', t('media.hidden', { count: moved }))
+      selection.clear()
+    },
+    [vault, push, t, navigate, hide, selection],
+  )
+
+  const requestHideFolder = useCallback(
+    async (folder: string) => {
+      if (!vault?.configured) {
+        push('warn', t('media.hideNotConfigured'))
+        navigate('vault')
+        return
+      }
+      const moved = await hideFolder(folder)
+      if (moved === null) return
+      push('success', t('media.hidden', { count: moved }))
+      selection.clear()
+    },
+    [vault, push, t, navigate, hideFolder, selection],
+  )
 
   // The Zone 4 drawer (below 1280px, human-confirmed 2026-09-29) is state the
   // *shell* owns, not the panel: §10.6.5 makes `Esc` "clear selection or close
@@ -102,7 +171,7 @@ function ShellBody() {
           route={route}
           onNavigate={navigate}
           mediaCount={stats ? stats.totalItems : null}
-          vaultLocked
+          vaultState={vaultState}
         />
 
         <main className="zone3" aria-label={route}>
@@ -116,7 +185,16 @@ function ShellBody() {
               onNavigate={navigate}
             />
           ) : null}
-          {route === 'media' ? <MediaScreen selection={selection} /> : null}
+          {route === 'media' ? (
+            <MediaScreen
+              selection={selection}
+              vault={{
+                configured: Boolean(vault?.configured),
+                onHide: (id: string) => void requestHide([id]),
+                onHideFolder: (folder: string) => void requestHideFolder(folder),
+              }}
+            />
+          ) : null}
           {route === 'lists' ? <ListsScreen /> : null}
           {route === 'backup' ? <BackupScreen /> : null}
           {route === 'settings' ? <SettingsScreen /> : null}
@@ -129,6 +207,8 @@ function ShellBody() {
           onClose={selection.clear}
           drawerOpen={drawerOpen}
           onDrawerChange={setDrawerOpen}
+          vaultConfigured={Boolean(vault?.configured)}
+          onHideSelected={() => void requestHide([...selection.selected])}
         />
       </div>
 
@@ -136,7 +216,17 @@ function ShellBody() {
           shell.css lifts the floating bulk bar clear of the strip, and a
           sibling combinator only reaches *later* siblings. */}
       <TransferBar />
-      <BulkToolbar count={selection.count} onClear={selection.clear} />
+      {/* Zone 5 belongs to the screens that own the shell selection (dashboard /
+          media / lists). It is not the Cofre's — that screen has its own grid
+          toolbar (§11.6) — and not Backup/Settings' either. */}
+      {hasSelectionModel(route) && route !== 'vault' ? (
+        <BulkToolbar
+          count={selection.count}
+          onClear={selection.clear}
+          vaultConfigured={Boolean(vault?.configured)}
+          onHideSelected={() => void requestHide([...selection.selected])}
+        />
+      ) : null}
       <ToastSock />
     </div>
   )
