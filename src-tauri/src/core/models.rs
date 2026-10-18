@@ -29,6 +29,16 @@ pub struct FilterSpec {
     pub search: Option<String>,
     /// `"image"` or `"video"`.
     pub file_type: Option<String>,
+    /// Phase 6 (§24.2): only `media.is_favorite = 1`. `#[serde(default)]` keeps
+    /// legacy stored criteria (c15 smart snapshots) and a partial caller spec
+    /// deserializable — a missing flag means "not constrained".
+    #[serde(default)]
+    pub favorite: bool,
+    /// Phase 6 (§24.3/§7.2d): only screenshots — a locale-aware predicate over
+    /// `relative_path`, never a stored column. `#[serde(default)]` for the same
+    /// wire-compatibility reason as `favorite`.
+    #[serde(default)]
+    pub screenshot: bool,
     /// Sort order: `capturedDesc` | `capturedAsc` | `name` | `size` | `addedDesc`
     /// (`addedDesc` = import time, newest first, v2 column `media.added_at`).
     pub sort: String,
@@ -242,7 +252,44 @@ pub struct MediaDto {
     pub has_metadata: bool,
     pub device_name: Option<String>,
     pub is_hidden: bool,
+    /// Phase 6 (§24.2): the ♡ flag — one column, all affordances mirror it.
+    pub is_favorite: bool,
     pub location: Option<LocationDto>,
+}
+
+/// §22 `CollectionDto` (Phase 6, §7.2d) — one **smart** collection: derived from
+/// a predicate, never stored and never user-edited (§24.1 decision 2).
+///
+/// `label_key` is an i18n key (`collections.favorites`, …): the frontend owns the
+/// label text, exactly like an [`AppliedFilter`](crate::core::filters::AppliedFilter).
+/// `cover_media_ids` is up to four recent member ids (§7.2d), missing while the
+/// collection's predicate is not yet available (Phase 8).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionDto {
+    /// Stable key: `favorites` | `screenshots` | `videos` | `documents` | `people`.
+    pub key: String,
+    pub label_key: String,
+    pub count: i64,
+    pub cover_media_ids: Vec<String>,
+}
+
+/// §8.1 `media_set_favorite` — how many rows actually flipped (a no-op set of an
+/// already-set flag counts zero).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteChangedDto {
+    pub changed: i64,
+}
+
+/// §8.1 `collection_open` payload — the collection key plus the caller's refining
+/// spec (§24.1 decision 3): the collection predicate is applied on top, so the
+/// caller can open "Favoritos" already filtered by a search or a device.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionOpenDto {
+    pub key: String,
+    pub spec: FilterSpec,
 }
 
 /// §7.3 `scan(...) -> ScanSummary`, the value `scan_start` resolves with (§8.1).

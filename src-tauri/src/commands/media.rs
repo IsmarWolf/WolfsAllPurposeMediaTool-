@@ -16,7 +16,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::core::db::{self, SqlitePool};
-use crate::core::models::{CityCountDto, FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto};
+use crate::core::models::{
+    CityCountDto, FavoriteChangedDto, FilterSpec, GeoDto, MediaScope, ScanSummary, StatsDto,
+};
 use crate::core::paths::PathResolver;
 use crate::core::scanner;
 use crate::core::thumbs;
@@ -335,6 +337,31 @@ pub fn media_remove(state: State<'_, AppState>, ids: Vec<String>) -> Result<usiz
     let pool = snapshot.require_pool()?;
     require_visible_unless_unlocked(&state, &pool, &ids)?;
     db::media_remove(&pool, &ids).map_err(AppError::from)
+}
+
+/// §8.1 `media_set_favorite` (Phase 6, §24.2) — set the ♡ flag on a batch.
+///
+/// Returns how many rows **actually flipped**, and emits `wolfs://db-changed` so
+/// the Favoritos collection and any open grid refetch. Like every id-based media
+/// command (c18), it refuses a hidden row unless Vault Mode is unlocked: the flag
+/// is a write into a row the standard shell cannot see (C6 at the id edge).
+#[tauri::command]
+pub fn media_set_favorite(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    on: bool,
+) -> Result<FavoriteChangedDto, AppError> {
+    let snapshot = state.snapshot();
+    let pool = snapshot.require_pool()?;
+    require_visible_unless_unlocked(&state, &pool, &ids)?;
+    let changed = db::media_set_favorite(&pool, &ids, on)?;
+    if changed > 0 {
+        let _ = app.emit(channels::DB_CHANGED, ());
+    }
+    Ok(FavoriteChangedDto {
+        changed: changed as i64,
+    })
 }
 
 /// `App/bin/ffmpeg.exe`, or `None` when it is not there. §3.3's finding on this

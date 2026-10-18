@@ -97,6 +97,19 @@ pub fn build(spec: &FilterSpec) -> FilterSql {
         params.push(Box::new(file_type.clone()));
     }
 
+    // Phase 6 (§24.2): a boolean flag, no value to bind.
+    if spec.favorite {
+        clauses.push("m.is_favorite = 1".to_string());
+    }
+
+    // Phase 6 (§7.2d/§24.3): the screenshot rule is a constant vocabulary, never
+    // user input, so it is a literal clause. It lives in `collections.rs` (the
+    // module that owns the collection predicates and the vocabulary) while this
+    // module stays the single orchestrator of spec -> SQL (c14 decision 2).
+    if spec.screenshot {
+        clauses.push(crate::core::collections::SCREENSHOT_CLAUSE.to_string());
+    }
+
     let order = match spec.sort.as_str() {
         "capturedAsc" => "m.captured_at ASC",
         "name" => "m.relative_path ASC",
@@ -253,6 +266,8 @@ mod tests {
             no_metadata: true,
             search: Some("IMG_45".into()),
             file_type: Some("image".into()),
+            favorite: true,
+            screenshot: true,
             sort: "name".into(),
             limit: 50,
             offset: 10,
@@ -269,9 +284,27 @@ mod tests {
         assert_eq!(value["month"], "2024-05");
         assert_eq!(value["noMetadata"], true);
         assert_eq!(value["fileType"], "image");
+        assert_eq!(value["favorite"], true);
+        assert_eq!(value["screenshot"], true);
         assert_eq!(value["sort"], "name");
         assert_eq!(value["limit"], 50);
         assert_eq!(value["offset"], 10);
+    }
+
+    /// Phase 6: the two new flags are optional on the wire, so a spec written
+    /// before them (a c15 smart-snapshot criteria JSON) still deserializes — the
+    /// flag defaults to `false`, not an error.
+    #[test]
+    fn a_spec_without_the_phase_6_flags_still_deserializes() {
+        // A real c15 smart-snapshot criteria: the full pre-Phase-6 spec, before
+        // `favorite`/`screenshot` existed.
+        let legacy = r#"{"scope":"standard","device":null,"cities":[],"month":null,
+            "noMetadata":false,"search":null,"fileType":"image",
+            "sort":"capturedDesc","limit":240,"offset":0}"#;
+        let spec: FilterSpec = serde_json::from_str(legacy).unwrap();
+        assert!(!spec.favorite);
+        assert!(!spec.screenshot);
+        assert_eq!(spec.file_type.as_deref(), Some("image"));
     }
 
     /// A hostile device label must stay data. If it ever reached the `WHERE`

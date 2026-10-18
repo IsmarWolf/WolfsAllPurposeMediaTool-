@@ -6,9 +6,10 @@
 //! The five tables of §6.1 are created verbatim (with `IF NOT EXISTS`, so
 //! `apply_schema` is safe on every boot), followed by the §6.3 indexes and the
 //! §14 `process_log` diagnostics table. `PRAGMA user_version` gates migrations
-//! (§6.4); v1 → v2 adds `media.added_at` (the import timestamp) and v2 → v3 adds
+//! (§6.4); v1 → v2 adds `media.added_at` (the import timestamp), v2 → v3 adds
 //! `media.restore_path` (c17, §12.5: the `Media/...` location a hidden item
-//! returns to on unhide). v0 → v1 was the first build.
+//! returns to on unhide) and v3 → v4 adds `media.is_favorite` (c21, §24.2: the ♡
+//! flag, one column behind every affordance). v0 → v1 was the first build.
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -24,9 +25,9 @@ use crate::core::paths::PathResolver;
 
 pub type SqlitePool = Pool<SqliteConnectionManager>;
 
-/// §6.4: "Migration v2 -> v3 is current" — v2 added `media.added_at`, v3 adds
-/// `media.restore_path` (c17, §12.5).
-pub const SCHEMA_VERSION: i64 = 3;
+/// §6.4: "Migration v3 → v4 is current" — v2 added `media.added_at`, v3 added
+/// `media.restore_path` (c17), v4 adds `media.is_favorite` (c21, §24.2).
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// §6.2: max 3 connections — WAL allows concurrent readers + one writer, and the
 /// background scanner (c6) takes at most one.
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS media (
     has_metadata    BOOLEAN DEFAULT 1,
     is_hidden       BOOLEAN DEFAULT 0,
     restore_path    TEXT,                        -- c17: Media/... path to return to on unhide (NULL while visible)
+    is_favorite     INTEGER DEFAULT 0,           -- c21: the heart flag (§24.2), v4
     device_name     TEXT
 );
 
@@ -105,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_media_captured    ON media(captured_at);
 CREATE INDEX IF NOT EXISTS idx_media_device      ON media(device_name);
 CREATE INDEX IF NOT EXISTS idx_media_hasmeta     ON media(has_metadata);
 CREATE INDEX IF NOT EXISTS idx_media_hidden      ON media(is_hidden);          -- supports scope pruning
+CREATE INDEX IF NOT EXISTS idx_media_favorite    ON media(is_favorite);        -- c21: Favoritos count/cover
 CREATE INDEX IF NOT EXISTS idx_media_type        ON media(file_type);
 CREATE INDEX IF NOT EXISTS idx_locations_city    ON locations(city);
 CREATE INDEX IF NOT EXISTS idx_list_items_media  ON list_items(media_id);      -- reverse lookup cost guard
@@ -174,23 +177,25 @@ pub fn open(resolver: &PathResolver) -> Result<SqlitePool, DbError> {
     Ok(pool)
 }
 
-/// Creates the tables, indexes and the §14 log, then walks the migration
-/// ladder and stamps `user_version`.
+/// Creates the tables and side tables, walks the migration ladder, then creates
+/// the indexes and stamps `user_version` (indexes last, so one on a migrated
+/// column is safe on an older database).
 ///
 /// One transaction: a failure leaves the DB untouched (§6.4). A fresh database
 /// has `user_version` 0 — `VERBATIM_SCHEMA` already carries the newest shape, so
-/// it is stamped directly. An existing v1 database gets `media.added_at` and
-/// `media.restore_path` via `ALTER TABLE`; a v2 database gets `restore_path`.
+/// it is stamped directly. An existing v1 database gets `media.added_at`,
+/// `media.restore_path` and `media.is_favorite` via `ALTER TABLE`; a v2 database
+/// gets the last two; a v3 database gets `is_favorite`.
 pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     let tx = conn.transaction()?;
     tx.execute_batch(VERBATIM_SCHEMA)?;
-    tx.execute_batch(INDEXES)?;
     tx.execute_batch(PROCESS_LOG_SCHEMA)?;
     tx.execute_batch(THUMB_META_SCHEMA)?;
 
     // Migration ladder (§6.4): v1 -> v2 adds media.added_at, v2 -> v3 adds
-    // media.restore_path (c17). A fresh v0 database carries both in
-    // VERBATIM_SCHEMA, so only a real older version is altered.
+    // media.restore_path (c17), v3 -> v4 adds media.is_favorite (c21). A fresh
+    // v0 database carries all three in VERBATIM_SCHEMA, so only a real older
+    // version is altered.
     let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version == 1 {
         tx.execute_batch("ALTER TABLE media ADD COLUMN added_at DATETIME")?;
@@ -198,6 +203,14 @@ pub fn apply_schema(conn: &mut Connection) -> Result<(), DbError> {
     if version == 1 || version == 2 {
         tx.execute_batch("ALTER TABLE media ADD COLUMN restore_path TEXT")?;
     }
+    if (1..=3).contains(&version) {
+        tx.execute_batch("ALTER TABLE media ADD COLUMN is_favorite INTEGER DEFAULT 0")?;
+    }
+
+    // Indexes come **after** the ladder: `idx_media_favorite` (c21) targets a
+    // column the ladder adds on an older database, so creating it first would
+    // fail on v1..v3.
+    tx.execute_batch(INDEXES)?;
 
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -351,7 +364,7 @@ pub fn media_query(pool: &SqlitePool, spec: &FilterSpec) -> Result<MediaQueryDto
     let mut stmt = conn.prepare(&format!(
         "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
                 m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
-                l.city, l.state, l.country, l.latitude, l.longitude
+                l.city, l.state, l.country, l.latitude, l.longitude, m.is_favorite
          FROM media m
          LEFT JOIN locations l ON l.media_id = m.id
          WHERE {where_sql}
@@ -382,6 +395,7 @@ pub fn media_query(pool: &SqlitePool, spec: &FilterSpec) -> Result<MediaQueryDto
                 has_metadata: row.get(7)?,
                 device_name: row.get(8)?,
                 is_hidden: row.get(9)?,
+                is_favorite: row.get(15)?,
                 location: Some(LocationDto {
                     city: row.get(10)?,
                     state: row.get(11)?,
@@ -411,7 +425,7 @@ pub fn media_detail(pool: &SqlitePool, id: &str) -> Result<Option<MediaDto>, DbE
     let mut stmt = conn.prepare(
         "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
                 m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
-                l.city, l.state, l.country, l.latitude, l.longitude
+                l.city, l.state, l.country, l.latitude, l.longitude, m.is_favorite
          FROM media m
          LEFT JOIN locations l ON l.media_id = m.id
          WHERE m.id = ?1",
@@ -435,6 +449,7 @@ pub fn media_detail(pool: &SqlitePool, id: &str) -> Result<Option<MediaDto>, DbE
                 has_metadata: row.get(7)?,
                 device_name: row.get(8)?,
                 is_hidden: row.get(9)?,
+                is_favorite: row.get(15)?,
                 location: Some(LocationDto {
                     city: row.get(10)?,
                     state: row.get(11)?,
@@ -488,6 +503,33 @@ pub fn media_any_hidden(pool: &SqlitePool, ids: &[String]) -> Result<bool, DbErr
         }
     }
     Ok(false)
+}
+
+/// §8.1 `media_set_favorite` (Phase 6, §24.2) — set the ♡ flag on a batch of rows.
+///
+/// Returns how many rows **actually flipped**, so the caller can tell a real
+/// change from a no-op. `WHERE is_favorite <> ?` skips rows already at the target
+/// value (a re-favorite of an already-favorited item counts zero) and ids that do
+/// not exist. One transaction, mirroring `media_remove`.
+pub fn media_set_favorite(pool: &SqlitePool, ids: &[String], on: bool) -> Result<usize, DbError> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let tx = conn.transaction()?;
+    let mut changed = 0;
+    {
+        let mut stmt = tx.prepare_cached(
+            "UPDATE media SET is_favorite = ?1 WHERE id = ?2 AND is_favorite <> ?1",
+        )?;
+        for id in ids {
+            changed += stmt.execute(rusqlite::params![on, id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(changed)
 }
 
 /// §7.2/§7.9 — the raw `lists` row plus its **visible** member count.
@@ -596,7 +638,7 @@ pub fn list_members(pool: &SqlitePool, list_id: &str) -> Result<Vec<MediaDto>, D
     let mut stmt = conn.prepare(
         "SELECT m.id, m.relative_path, m.thumb_path, m.file_hash, m.file_size, m.file_type,
                 m.captured_at, m.has_metadata, m.device_name, m.is_hidden,
-                l.city, l.state, l.country, l.latitude, l.longitude
+                l.city, l.state, l.country, l.latitude, l.longitude, m.is_favorite
          FROM list_items li
          JOIN media m ON m.id = li.media_id
          LEFT JOIN locations l ON l.media_id = m.id
@@ -620,6 +662,7 @@ pub fn list_members(pool: &SqlitePool, list_id: &str) -> Result<Vec<MediaDto>, D
                 has_metadata: row.get(7)?,
                 device_name: row.get(8)?,
                 is_hidden: row.get(9)?,
+                is_favorite: row.get(15)?,
                 location: Some(LocationDto {
                     city: row.get(10)?,
                     state: row.get(11)?,
@@ -1444,6 +1487,7 @@ mod tests {
             "idx_locations_city",
             "idx_media_captured",
             "idx_media_device",
+            "idx_media_favorite",
             "idx_media_hasmeta",
             "idx_media_hidden",
             "idx_media_type",
@@ -1454,6 +1498,46 @@ mod tests {
                 "missing {expected}"
             );
         }
+    }
+
+    /// Phase 6: `media_set_favorite` flips only the rows whose value actually
+    /// changes — a re-favorite counts zero, an unknown id counts zero — and the
+    /// flag survives a round-trip through `media_query`/`media_detail`.
+    #[test]
+    fn media_set_favorite_counts_only_real_flips() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&booted(dir.path())).unwrap();
+        pool.get()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO media (id, relative_path, thumb_path, file_hash, file_size, file_type, is_hidden) VALUES
+                   ('a', 'Media/PC/a.jpg', 'Thumbnails/400/PC/a.webp', 'ha', 100, 'image', 0),
+                   ('b', 'Media/PC/b.jpg', 'Thumbnails/400/PC/b.webp', 'hb', 100, 'image', 0);",
+            )
+            .unwrap();
+
+        assert_eq!(
+            media_set_favorite(&pool, &["a".into(), "b".into(), "nope".into()], true).unwrap(),
+            2,
+            "a and b flip; the unknown id does not"
+        );
+        assert_eq!(
+            media_set_favorite(&pool, &["a".into()], true).unwrap(),
+            0,
+            "a is already favorite: nothing flips"
+        );
+
+        let item = media_detail(&pool, "a").unwrap().unwrap();
+        assert!(item.is_favorite);
+        let item = media_detail(&pool, "b").unwrap().unwrap();
+        assert!(item.is_favorite);
+
+        assert_eq!(
+            media_set_favorite(&pool, &["a".into(), "b".into()], false).unwrap(),
+            2,
+        );
+        assert!(!media_detail(&pool, "a").unwrap().unwrap().is_favorite);
+        assert_eq!(media_set_favorite(&pool, &[], true).unwrap(), 0);
     }
 
     #[test]
@@ -1580,6 +1664,7 @@ mod tests {
             .unwrap();
         assert!(columns.iter().any(|c| c == "added_at"));
         assert!(columns.iter().any(|c| c == "restore_path"));
+        assert!(columns.iter().any(|c| c == "is_favorite"));
         let retained: i64 = conn
             .query_row("SELECT COUNT(*) FROM media WHERE id = 'm1'", [], |row| {
                 row.get(0)
@@ -1633,12 +1718,68 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert!(columns.iter().any(|c| c == "restore_path"));
+        assert!(columns.iter().any(|c| c == "is_favorite"));
         let retained: i64 = conn
             .query_row("SELECT COUNT(*) FROM media WHERE id = 'm1'", [], |row| {
                 row.get(0)
             })
             .unwrap();
         assert_eq!(retained, 1);
+    }
+
+    /// c21: a v3 database (the shape c17 shipped, with `restore_path` but no
+    /// `is_favorite`) gains `media.is_favorite`, defaults its rows to 0 and is
+    /// stamped the current vintage.
+    #[test]
+    fn a_v3_database_gains_is_favorite() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = Connection::open(dir.path().join("app.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE media (
+                id              TEXT PRIMARY KEY,
+                relative_path   TEXT NOT NULL UNIQUE,
+                thumb_path      TEXT NOT NULL,
+                file_hash       TEXT UNIQUE,
+                file_size       INTEGER,
+                file_type       TEXT,
+                captured_at     DATETIME,
+                added_at        DATETIME,
+                has_metadata    BOOLEAN DEFAULT 1,
+                is_hidden       BOOLEAN DEFAULT 0,
+                restore_path    TEXT,
+                device_name     TEXT
+             );
+             CREATE TABLE locations (
+                media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                city TEXT, state TEXT, country TEXT,
+                latitude REAL, longitude REAL
+             );
+             INSERT INTO media (id, relative_path, thumb_path, has_metadata) VALUES
+                ('m1', 'a.jpg', 'a.webp', 1);",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 3).unwrap();
+
+        apply_schema(&mut conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(media)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|c| c == "is_favorite"));
+        let favorite: bool = conn
+            .query_row("SELECT is_favorite FROM media WHERE id = 'm1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(!favorite, "an existing row defaults to not-favorite");
     }
 
     #[test]

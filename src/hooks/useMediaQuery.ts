@@ -12,6 +12,8 @@ const DEFAULT_SPEC: FilterSpec = {
   noMetadata: false,
   search: null,
   fileType: null,
+  favorite: false,
+  screenshot: false,
   sort: 'capturedDesc',
   limit: 240,
   offset: 0,
@@ -129,7 +131,9 @@ export function useMediaQuery(initial?: Partial<FilterSpec>) {
       spec.cities.length > 0 ||
       spec.month !== null ||
       spec.noMetadata ||
-      spec.fileType !== null,
+      spec.fileType !== null ||
+      spec.favorite ||
+      spec.screenshot,
     [spec],
   )
 

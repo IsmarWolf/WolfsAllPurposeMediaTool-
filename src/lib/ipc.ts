@@ -9,7 +9,10 @@ import { toAppError } from './errors'
 import type {
   AppVersionsDto,
   CityCountDto,
+  CollectionDto,
+  CollectionOpenDto,
   DeviceDto,
+  FavoriteChangedDto,
   FilterSpec,
   GeoDto,
   IngestUsbStartDto,
@@ -164,6 +167,21 @@ export const mediaScopeVideo = (id: string) => call<void>('media_scope_video', {
 
 /** §8.1 `media_remove` — delete media rows by id. */
 export const mediaRemove = (ids: string[]) => call<number>('media_remove', { ids })
+
+/* ------------------------------------------------------- collections §8.1/c21 */
+
+/** §8.1 `media_set_favorite` (c21) — set the ♡ flag on a batch; resolves how many
+ *  rows actually flipped (a re-favorite counts zero). */
+export const mediaSetFavorite = (ids: string[], on: boolean) =>
+  call<FavoriteChangedDto>('media_set_favorite', { ids, on })
+
+/** §8.1 `collections_list` (c21) — the five smart collections with counts + covers. */
+export const collectionsList = (scope: MediaScopeDto) =>
+  call<CollectionDto[]>('collections_list', { scope })
+
+/** §8.1 `collection_open` (c21) — a collection's gallery page, predicate applied. */
+export const collectionOpen = (payload: CollectionOpenDto) =>
+  call<MediaQueryDto>('collection_open', { payload })
 
 /* ------------------------------------------------------------------ lists §8.1/c15 */
 

@@ -8,6 +8,7 @@
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
+use crate::core::collections::CollectionError;
 use crate::core::db::DbError;
 use crate::core::exif::ExifError;
 use crate::core::layout::LayoutError;
@@ -111,6 +112,19 @@ impl From<ListError> for AppError {
             | ListError::ManualList
             | ListError::EmptyName
             | ListError::Criteria(_) => AppError::Conflict(err.to_string()),
+        }
+    }
+}
+
+/// §7.2d/c21 — a collection operation. A `Db` failure keeps its own code; an
+/// unavailable predicate (Documentos / Pessoas & Animais before Phase 8, or an
+/// unknown key) is `E_CONFLICT` — the Coleções screen renders those cards
+/// disabled (§11.10), so this is only reachable from a stale or hostile caller.
+impl From<CollectionError> for AppError {
+    fn from(err: CollectionError) -> Self {
+        match err {
+            CollectionError::Db(error) => AppError::Db(error),
+            CollectionError::Unavailable(_) => AppError::Conflict(err.to_string()),
         }
     }
 }

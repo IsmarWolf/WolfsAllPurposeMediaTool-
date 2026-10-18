@@ -167,6 +167,8 @@ export interface MediaDto {
   hasMetadata: boolean
   deviceName: string | null
   isHidden: boolean
+  /** Phase 6 (§24.2): the ♡ flag. */
+  isFavorite: boolean
   location: {
     city: string | null
     state: string | null
@@ -185,6 +187,10 @@ export interface FilterSpec {
   noMetadata: boolean
   search: string | null
   fileType: string | null
+  /** Phase 6 (§24.2): only favorites. */
+  favorite: boolean
+  /** Phase 6 (§24.3): only screenshots (derived predicate, no column). */
+  screenshot: boolean
   sort: string
   limit: number
   offset: number
@@ -202,6 +208,33 @@ export interface CityCountDto {
   city: string
   country: string | null
   count: number
+}
+
+/* ------------------------------------------------------------ collections §7.2d */
+
+/**
+ * §22 `CollectionDto` (Phase 6, §7.2d) — one **smart** collection: derived from a
+ * predicate, never stored and never user-edited. `labelKey` is an i18n key
+ * (`collections.favorites`, …); `coverMediaIds` is up to four recent member ids.
+ * A collection whose predicate is not yet available (Documentos / Pessoas &
+ * Animais, Phase 8) lists with `count: 0` and no cover.
+ */
+export interface CollectionDto {
+  key: string
+  labelKey: string
+  count: number
+  coverMediaIds: string[]
+}
+
+/** §8.1 `media_set_favorite` — how many rows actually flipped. */
+export interface FavoriteChangedDto {
+  changed: number
+}
+
+/** §8.1 `collection_open` payload: the collection key + the caller's refining spec. */
+export interface CollectionOpenDto {
+  key: string
+  spec: FilterSpec
 }
 
 /* ------------------------------------------------------------------ lists §7.1 */
