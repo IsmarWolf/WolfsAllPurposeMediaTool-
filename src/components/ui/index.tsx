@@ -94,7 +94,29 @@ export function SkeletonBlock({
   return <div className="md-skeleton" style={{ height, width }} aria-hidden="true" />
 }
 
-export function EmptyState({ messageKey }: { messageKey: string }) {
+export function EmptyState({
+  messageKey,
+  titleKey,
+  ctaKey,
+  onCta,
+}: {
+  messageKey?: string
+  titleKey?: string
+  ctaKey?: string
+  onCta?: () => void
+}) {
   const { t } = useI18n()
-  return <p className="md-empty">{t(messageKey)}</p>
+  const message = messageKey ? t(messageKey) : undefined
+  const title = titleKey ? t(titleKey) : undefined
+  return (
+    <div className="md-empty">
+      {title ? <p className="md-empty__title">{title}</p> : null}
+      {message ? <p className="md-empty__message">{message}</p> : null}
+      {ctaKey && onCta ? (
+        <button type="button" className="md-btn md-btn--filled" onClick={onCta}>
+          {t(ctaKey)}
+        </button>
+      ) : null}
+    </div>
+  )
 }

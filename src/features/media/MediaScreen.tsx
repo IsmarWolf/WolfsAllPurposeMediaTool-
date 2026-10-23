@@ -1,8 +1,15 @@
-import { useState, useCallback, useMemo, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { Button, PageHeader } from '../../components/ui'
 import { StateRegion } from '../../components/layout/StateRegion'
 import { useI18n } from '../../hooks/useContexts'
 import { useAsync } from '../../hooks/useAsync'
+import { useSetFavorite } from '../../hooks/useFavorites'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { useSelection } from '../../hooks/useSelection'
 import { useShortcuts, type Shortcut } from '../../hooks/useShortcuts'
@@ -15,7 +22,7 @@ import { MediaLightbox } from './MediaLightbox'
 import { FilterDrawer } from './FilterDrawer'
 import { FilterChips } from './FilterChips'
 import { MediaFilterRow } from './MediaFilterRow'
-import { ApplyToList } from './ApplyToList'
+import type { OpenCollection } from '../collections'
 
 /**
  * §12.6's guard, reused by the two bindings whose owner may also handle the key
@@ -33,10 +40,20 @@ function focusedInteractive(): boolean {
  * the shell header carries none. The grid is virtualized with LQIP tiles
  * (§10.6.5); the five-state machine (§10.6.4) drives the render. Selection is
  * the shell's (§12.6) so the Inspector + bulk bar follow the gallery.
+ *
+ * c22: when the shell mounts it with a `collection` (§11.10 C-8c), the query
+ * runs `collection_open` instead of `media_query`, the header carries the
+ * collection's name + a back control, and `[Z3d]` adds the *selection* (or the
+ * whole page, with no selection) to a manual list — the §12.4 rewrite of the
+ * retired snapshot flow.
  */
 export function MediaScreen({
   selection,
   vault,
+  collection = null,
+  onExitCollection,
+  onRequestAddToList,
+  onFavoriteInfo,
 }: {
   selection: ReturnType<typeof useSelection>
   /** §11.6 hide bridge from the shell: `[C-4j]` and the folder-hide action. */
@@ -45,9 +62,21 @@ export function MediaScreen({
     onHide: (id: string) => void
     onHideFolder: (folder: string) => void
   }
+  /** c22/§11.10: the open collection, or null for the plain gallery. */
+  collection?: OpenCollection | null
+  onExitCollection?: () => void
+  /** c22/§12.4: hands the shell the ids to add (selection, or the whole page). */
+  onRequestAddToList?: (ids: string[]) => void
+  /**
+   * c22/§24.2: reports the selection's favorite aggregate to the shell, which
+   * feeds `[Z4h]`/`[Z5f]`. `null` = no selection (or a selection whose ids are
+   * not all on the current page — the flag cannot be known without N reads).
+   */
+  onFavoriteInfo?: (info: 'on' | 'off' | 'mixed' | null) => void
 }) {
   const { t } = useI18n()
-  const query = useMediaQuery()
+  const query = useMediaQuery(undefined, collection?.key ?? null)
+  const setFavorite = useSetFavorite()
   // c10: the asset scope is backend-side, but the URL needs the absolute root —
   // `RootInfoDto.root` is the one absolute path the frontend may hold (§22).
   const rootInfo = useAsync<RootInfoDto>(() => resolveAppRoot(), [])
@@ -58,13 +87,46 @@ export function MediaScreen({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
-  const [applyOpen, setApplyOpen] = useState(false)
   // c19: the tile context menu (§10.6.2, mockup `#ctxmenu`). Closed by Esc /
   // scroll / a click outside, and before any of its actions run.
   const [ctx, setCtx] = useState<ContextTarget | null>(null)
 
-  const items = query.data?.items ?? []
+  // `?? []` is a fresh array every render; memoized so the hooks below
+  // (`selectionFavorite`, `shortcuts`, `openLightbox`) do not recompute on
+  // renders that only flipped a boolean.
+  const items = useMemo(() => query.data?.items ?? [], [query.data])
   const total = query.data?.total ?? 0
+
+  // c22/§24.2: the selection's favorite aggregate. Only derivable when every
+  // selected id is on the loaded page (a selection can outlive a page turn);
+  // otherwise the shell gets `null` and hides the flag controls.
+  const selectionFavorite = useMemo<'on' | 'off' | 'mixed' | null>(() => {
+    if (selection.count === 0) return null
+    const picked = items.filter((item) => selection.selected.has(item.id))
+    if (picked.length !== selection.count) return null
+    if (picked.every((item) => item.isFavorite)) return 'on'
+    if (picked.every((item) => !item.isFavorite)) return 'off'
+    return 'mixed'
+  }, [items, selection.selected, selection.count])
+  useEffect(() => {
+    onFavoriteInfo?.(selectionFavorite)
+  }, [selectionFavorite, onFavoriteInfo])
+
+  const toggleFavorite = useCallback(
+    (item: MediaDto) => {
+      void setFavorite([item.id], !item.isFavorite)
+    },
+    [setFavorite],
+  )
+
+  // c22/§12.4: `[Z3d]` hands the shell what to add — the selection when there
+  // is one, else the whole loaded page (the §12.4 flow the human confirmed:
+  // "add what I am looking at").
+  const requestAddToList = useCallback(() => {
+    const ids = selection.count > 0 ? [...selection.selected] : items.map((item) => item.id)
+    if (ids.length === 0) return
+    onRequestAddToList?.(ids)
+  }, [selection, items, onRequestAddToList])
 
   const lightboxId = lightboxIndex !== null ? (items[lightboxIndex]?.id ?? null) : null
 
@@ -157,17 +219,32 @@ export function MediaScreen({
 
   return (
     <div className="screen">
+      {/* c22/§11.10 [C-8d]: inside a collection the back control returns to the
+          card grid; the route is the shell's to move. Its own left-aligned row
+          above the title (Google Photos puts back top-left, never top-right),
+          and the arrow glyph is CSS (`collection-back::before`) so the label
+          stays the exact "Voltar" the test pins. */}
+      {collection && onExitCollection ? (
+        <div className="collection-back-row">
+          <Button variant="text" data-testid="collection-back" onClick={onExitCollection}>
+            {t('common.back')}
+          </Button>
+        </div>
+      ) : null}
       <PageHeader
-        title={t('nav.media')}
-        subtitle={t('media.subtitle')}
+        title={collection ? t(collection.labelKey) : t('nav.media')}
+        subtitle={collection ? t('media.collectionSubtitle') : t('media.subtitle')}
         actions={
           <>
             <span className="md-badge" data-testid="media-total">
               {formatCount(total)}
             </span>
-            {/* §11.2 [Z3d] / §12.4 — snapshot the active spec into a list. */}
-            <Button variant="tonal" onClick={() => setApplyOpen(true)}>
-              {t('lists.applyToList')}
+            {/* c22/§12.4 [Z3d]: add the selection (or the page) to a manual
+                list — the add-items rewrite of the retired snapshot flow. */}
+            <Button variant="tonal" data-testid="z3d-add-list" onClick={requestAddToList}>
+              {selection.count > 0
+                ? t('lists.addSelection', { count: selection.count })
+                : t('lists.addView', { count: total })}
             </Button>
             <Button variant="tonal" onClick={() => setSelectionMode((v) => !v)}>
               {t('media.selectionMode')}
@@ -204,6 +281,7 @@ export function MediaScreen({
             selectionMode={selectionMode}
             selection={selection}
             navEnabled={lightboxId === null}
+            onToggleFavorite={toggleFavorite}
           />
         }
       />
@@ -241,10 +319,6 @@ export function MediaScreen({
         onApply={query.updateSpec}
       />
 
-      {/* §12.4 [Aplicar à lista ▾] — lazy, so its `lists_list` read only
-          happens when the human actually opens the picker. */}
-      {applyOpen ? <ApplyToList spec={query.spec} onClose={() => setApplyOpen(false)} /> : null}
-
       {/* §10.6.2 / mockup `#ctxmenu` — the tile right-click menu. Rendered above
           the grid; `onHide` routes through the shell's hide bridge, so a locked
           vault sends the human to the gate rather than silently failing. */}
@@ -252,8 +326,13 @@ export function MediaScreen({
         <MediaContextMenu
           target={ctx}
           vaultConfigured={vault.configured}
+          isFavorite={items.find((item) => item.id === ctx.id)?.isFavorite ?? false}
           onOpen={openLightbox}
           onHide={vault.onHide}
+          onToggleFavorite={(id) => {
+            const item = items.find((entry) => entry.id === id)
+            if (item) toggleFavorite(item)
+          }}
           onClose={closeContext}
         />
       ) : null}

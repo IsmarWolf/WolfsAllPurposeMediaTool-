@@ -63,10 +63,13 @@ export function Providers({ children }: { children: ReactNode }) {
   }, [])
 
   const toast = useMemo<ToastContextValue>(() => {
-    const push = (kind: ToastKind, message: string) => {
+    const push = (kind: ToastKind, message: string, action?: ToastItem['action']) => {
       nextId.current += 1
       const id = nextId.current
-      setToasts((current) => [...current.slice(-(MAX_TOASTS - 1)), { id, kind, message }])
+      setToasts((current) => [
+        ...current.slice(-(MAX_TOASTS - 1)),
+        { id, kind, message, ...(action ? { action } : {}) },
+      ])
       window.setTimeout(() => dismiss(id), TOAST_TIMEOUT_MS)
     }
 

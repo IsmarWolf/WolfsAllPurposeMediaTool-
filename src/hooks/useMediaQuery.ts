@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toAppError } from '../lib/errors'
-import { mediaQuery } from '../lib/ipc'
+import { collectionOpen, mediaQuery } from '../lib/ipc'
 import type { FilterSpec, MediaQueryDto } from '../types/api'
 import { useDbChanged } from './useTauriEvent'
 
@@ -20,11 +20,8 @@ const DEFAULT_SPEC: FilterSpec = {
 }
 
 /**
- * The spec a fresh filter surface starts from. Exported for the c16 snapshot
- * builder (§11.5), which seeds its local spec from a list's stored criteria —
- * or this when the list is new/manual — and must agree with the gallery's own
- * defaults or "Editar critérios" would open on a different starting point than
- * the gallery shows.
+ * The spec a fresh filter surface starts from. Retained for any legacy helper
+ * that still exports it; c16/c22 no longer builds lists from it.
  */
 export const DEFAULT_FILTER_SPEC: FilterSpec = DEFAULT_SPEC
 
@@ -41,8 +38,16 @@ export const DEFAULT_FILTER_SPEC: FilterSpec = DEFAULT_SPEC
  * initial/no-data read shows the skeleton), so the scroll position survives;
  * and any `wolfs://db-changed` — an ingest or a scan elsewhere in the app —
  * re-runs the current spec, so the badge and the grid catch up on their own.
+ *
+ * c22: `collectionKey` swaps the backend call for §8.1's `collection_open`
+ * (c21) — a scoped gallery whose predicate the backend owns (C-8c). Captured
+ * once, like `initialSpec`: a collection screen is mounted per open, so a
+ * fresh inline key must not re-scope mid-session. The shell enforces that
+ * half of the contract by re-keying `MediaScreen` on the scope (C-8f), which
+ * is also what drops it again when the sidebar's Mídia click leaves the
+ * collection without leaving the route.
  */
-export function useMediaQuery(initial?: Partial<FilterSpec>) {
+export function useMediaQuery(initial?: Partial<FilterSpec>, collectionKey?: string | null) {
   // The §11.6 vault grid is the only caller that passes `initial` (`scope: Vault`):
   // it is the same query, filters and paging as the gallery, seeded on the hidden
   // scope so the two pages share one code path (C6: the scope is explicit here,
@@ -52,6 +57,13 @@ export function useMediaQuery(initial?: Partial<FilterSpec>) {
   // state computes the same merged spec once, so both agree without touching a
   // ref in render (react-compiler rule).
   const initialSpec = useRef<FilterSpec>({ ...DEFAULT_SPEC, ...initial })
+  // c22: the scope is a mount-time capture too, but held as **state that is
+  // never written** rather than a ref: `filtered` and the empty-state copy read
+  // it during render, and a ref read there would neither be reactive nor legal
+  // (`react(refs)`). The shell re-keys `MediaScreen` on every scope change, so
+  // a fresh inline key always arrives as a fresh mount and this value cannot go
+  // stale under the gallery.
+  const [collection] = useState<string | null>(collectionKey ?? null)
   const [spec, setSpec] = useState<FilterSpec>(() => ({ ...DEFAULT_SPEC, ...initial }))
   const [data, setData] = useState<MediaQueryDto | null>(null)
   const [loading, setLoading] = useState(true)
@@ -59,36 +71,44 @@ export function useMediaQuery(initial?: Partial<FilterSpec>) {
   const [error, setError] = useState<ReturnType<typeof toAppError> | null>(null)
   const requestId = useRef(0)
 
-  const run = useCallback(async (nextSpec: FilterSpec, append = false) => {
-    const id = ++requestId.current
-    if (append) {
-      setLoadingMore(true)
-    } else {
-      setLoading(true)
-    }
-    setError(null)
-    try {
-      const result = await mediaQuery(nextSpec)
-      if (id === requestId.current) {
-        setData((prev) =>
-          append && prev ? { ...result, items: [...prev.items, ...result.items] } : result,
-        )
-        setError(null)
+  const run = useCallback(
+    async (nextSpec: FilterSpec, append = false) => {
+      const id = ++requestId.current
+      if (append) {
+        setLoadingMore(true)
+      } else {
+        setLoading(true)
       }
-    } catch (raw) {
-      if (id === requestId.current) {
-        setError(toAppError(raw))
-        if (!append) {
-          setData(null)
+      setError(null)
+      try {
+        // c22: a collection screen runs the backend-owned predicate (§8.1
+        // `collection_open`), never a hand-built spec: the refinement the human
+        // applies in the scoped gallery rides along in `spec`.
+        const result = collection
+          ? await collectionOpen({ key: collection, spec: nextSpec })
+          : await mediaQuery(nextSpec)
+        if (id === requestId.current) {
+          setData((prev) =>
+            append && prev ? { ...result, items: [...prev.items, ...result.items] } : result,
+          )
+          setError(null)
+        }
+      } catch (raw) {
+        if (id === requestId.current) {
+          setError(toAppError(raw))
+          if (!append) {
+            setData(null)
+          }
+        }
+      } finally {
+        if (id === requestId.current) {
+          setLoading(false)
+          setLoadingMore(false)
         }
       }
-    } finally {
-      if (id === requestId.current) {
-        setLoading(false)
-        setLoadingMore(false)
-      }
-    }
-  }, [])
+    },
+    [collection],
+  )
 
   // First read on mount — same "one read per mount" contract as useAsync.
   useEffect(() => {
@@ -126,6 +146,10 @@ export function useMediaQuery(initial?: Partial<FilterSpec>) {
 
   const filtered = useMemo(
     () =>
+      // c22: inside a collection the gallery is scoped by the backend predicate
+      // even with a default spec — an empty page there is "no results", never
+      // "the library is empty, import media" (C-8f).
+      collection !== null ||
       spec.search !== null ||
       spec.device !== null ||
       spec.cities.length > 0 ||
@@ -134,7 +158,7 @@ export function useMediaQuery(initial?: Partial<FilterSpec>) {
       spec.fileType !== null ||
       spec.favorite ||
       spec.screenshot,
-    [spec],
+    [collection, spec],
   )
 
   const retry = useCallback(() => {

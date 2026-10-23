@@ -1,7 +1,6 @@
 {
   "app.name": "WolfsMedia",
   "app.tagline": "Backup offline de mídia",
-
   "nav.primary": "Navegação principal",
   "nav.explore": "Explorar",
   "nav.home": "Nº geral",
@@ -13,15 +12,12 @@
   "nav.settings": "Ajustes",
   "nav.security": "Segurança",
   "nav.vault": "Cofre",
-
   "action.import": "Importar",
   "action.ingest": "Ingerir mídia",
-
   "appBar.dbOk": "Banco de dados operacional",
   "appBar.dbFail": "Banco de dados indisponível",
   "appBar.dbUnknown": "Verificando o banco de dados",
   "appBar.rootUnknown": "Raiz desconhecida",
-
   "common.yes": "Sim",
   "common.no": "Não",
   "common.working": "Processando…",
@@ -29,17 +25,14 @@
   "common.close": "Fechar",
   "common.save": "Salvar",
   "common.cancel": "Cancelar",
-
   "root.wolfsRootEnv": "Variável WOLFS_ROOT",
   "root.markerWalk": "Marcador encontrado",
   "root.packagedAppDir": "Pasta App/ do aplicativo (ainda sem marcador)",
   "root.unrootedFallback": "Sem marcador (pasta local)",
-
   "state.empty": "Esta pasta está vazia.",
   "state.emptyCta": "Importe mídia para começar.",
   "state.noResults": "Nenhum resultado para os filtros ativos.",
   "state.clearFilters": "Limpe os filtros para ver tudo.",
-
   "error.E_DB": "Não foi possível ler o banco de dados.",
   "error.E_ROOT": "A pasta raiz do SSD não pôde ser usada.",
   "error.E_FFMPEG": "O ffmpeg não está disponível; vídeos não serão processados.",
@@ -49,7 +42,6 @@
   "error.E_INGEST": "A ingestão parou antes de terminar.",
   "error.E_UNAVAILABLE": "A operação não está disponível agora.",
   "error.unavailable": "Não foi possível carregar os dados.",
-
   "dash.title": "Visão geral",
   "dash.loading": "Carregando…",
   "dash.totalItems": "Total de itens",
@@ -70,7 +62,6 @@
   "dash.ffmpegMissing": "ffmpeg ausente",
   "dash.demoTitle": "Estados da interface (QA)",
   "dash.demoClose": "Fechar demonstração",
-
   "media.subtitle": "Fotos e vídeos do SSD",
   "media.filtersL1": "Filtros rápidos",
   "media.facetLocation": "Local",
@@ -120,15 +111,19 @@
   "media.hideFolder": "Ocultar pasta no cofre",
   "media.hideNotConfigured": "Configure o cofre para ocultar arquivos.",
   "media.hidden": "{count} item(ns) ocultado(s).",
+  "media.deleteTitle": "Apagar mídia",
+  "media.deleteConfirm": "Apagar {count} item(ns) do disco? Os arquivos são removidos junto com o registro e esta ação não pode ser desfeita.",
+  "media.deleted": "{count} item(ns) apagado(s).",
+  "media.deletePartial": "{count} de {total} item(ns) apagado(s) — algum arquivo pode estar em uso por outro programa.",
   "common.remove": "Remover",
-
-  "lists.subtitle": "Listas inteligentes e filtros salvos",
+  "lists.subtitle": "Crie e organize listas de mídia",
   "lists.indexLabel": "Listas",
   "lists.selectOne": "Selecione uma lista ou crie uma nova.",
   "lists.newList": "Nova lista",
+  "lists.emptyTitle": "Sem listas",
+  "lists.emptyCta": "Criar lista",
   "lists.namePlaceholder": "Nome da lista…",
   "lists.create": "Criar",
-  "lists.createAndApply": "Criar e aplicar",
   "lists.existing": "Listas existentes",
   "lists.none": "Nenhuma lista ainda.",
   "lists.loading": "Carregando listas…",
@@ -146,16 +141,6 @@
   "lists.added": "{count} item(ns) adicionado(s).",
   "lists.noMembers": "Nenhum item nesta lista.",
   "lists.remove": "Remover da lista",
-  "lists.editCriteria": "Editar critérios",
-  "lists.applyCriteria": "Aplicar critérios (snapshot)",
-  "lists.criteriaAll": "Sem filtros (todos os itens)",
-  "lists.sync": "Sincronizar",
-  "lists.synced": "Lista sincronizada.",
-  "lists.applyToList": "Aplicar à lista",
-  "lists.applyHint": "Aplique o filtro atual a uma lista. A lista guarda os critérios e passa a ser inteligente; os membros são um retrato do momento atual.",
-  "lists.applied": "Lista atualizada com o filtro atual.",
-  "lists.snapshotApplied": "Critérios aplicados; a lista foi sincronizada.",
-
   "backup.subtitle": "Uma única página: USB, Wi-Fi ou Disco local como origem",
   "backup.source": "Origem da cópia",
   "backup.usb": "USB",
@@ -212,7 +197,6 @@
   "transfer.phase.listing": "Lendo o aparelho",
   "transfer.phase.copy": "Copiando do aparelho",
   "transfer.phase.index": "Indexando na biblioteca",
-
   "settings.subtitle": "Raiz do SSD, origem e manutenção",
   "settings.originTitle": "Origem",
   "settings.rootPath": "Pasta raiz",
@@ -226,7 +210,6 @@
   "settings.recalcSame": "A raiz continua a mesma.",
   "settings.vacuum": "Compactar banco",
   "settings.vacuumDone": "Banco compactado.",
-
   "vault.title": "Cofre",
   "vault.subtitle": "Um espaço guardado, não um item de menu",
   "vault.unconfigured": "Não configurado",
@@ -273,7 +256,6 @@
   "vault.deleteTitle": "Apagar definitivamente",
   "vault.deleteConfirm": "Apagar {count} item(ns) do cofre? Esta ação não pode ser desfeita.",
   "vault.deleted": "{count} item(ns) apagado(s).",
-
   "zone.inspector": "Inspetor",
   "inspector.summary": "Resumo",
   "inspector.single": "Item",
@@ -284,9 +266,28 @@
   "inspector.bulkCount": "{count} itens selecionados",
   "inspector.open": "Abrir inspetor",
   "inspector.closeDrawer": "Fechar inspetor",
-
   "bulk.label": "Ações em massa",
   "bulk.count": "{count} selecionados",
   "bulk.clear": "Limpar seleção",
-  "bulk.delete": "Apagar"
+  "bulk.delete": "Apagar",
+  "nav.collections": "Coleções",
+  "nav.organize": "Organizar",
+  "common.back": "Voltar",
+  "common.undo": "Desfazer",
+  "media.unfavorite": "Desfavoritar",
+  "media.collectionSubtitle": "Itens desta coleção",
+  "collections.subtitle": "Coleções inteligentes com base na biblioteca",
+  "collections.favorites": "Favoritos",
+  "collections.screenshots": "Capturas de tela",
+  "collections.videos": "Vídeos",
+  "collections.documents": "Documentos",
+  "collections.people": "Pessoas & Animais",
+  "collections.soon": "Disponível em breve",
+  "collections.items": "{count} itens",
+  "lists.addTo": "Adicionar à lista",
+  "lists.addSelection": "Adicionar {count} selecionados à lista",
+  "lists.addView": "Adicionar {count} vistos à lista",
+  "lists.addHint": "Adicionar {count} item(ns) a uma lista manual.",
+  "lists.addedTo": "{count} item(ns) adicionados a \"{name}\".",
+  "lists.createAndAdd": "Criar e adicionar"
 }

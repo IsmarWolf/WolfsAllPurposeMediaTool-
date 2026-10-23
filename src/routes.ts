@@ -3,7 +3,15 @@
  * Backup**, not routes; Cofre is a route of its own because it is a guarded
  * space, not a menu item.
  */
-export const ROUTES = ['dashboard', 'media', 'lists', 'backup', 'settings', 'vault'] as const
+export const ROUTES = [
+  'dashboard',
+  'media',
+  'collections',
+  'lists',
+  'backup',
+  'settings',
+  'vault',
+] as const
 
 export type Route = (typeof ROUTES)[number]
 

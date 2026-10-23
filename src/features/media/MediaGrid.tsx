@@ -61,6 +61,7 @@ export function MediaGrid({
   selection,
   navEnabled,
   thumbSrc,
+  onToggleFavorite,
 }: {
   items: MediaDto[]
   root: string | null
@@ -82,6 +83,12 @@ export function MediaGrid({
    * session-gated `wolfsvault` scheme instead. `hi` is the hover (400px) slot.
    */
   thumbSrc?: (item: MediaDto, hi: boolean) => string
+  /**
+   * c22/§24.2: the ♡ toggle. Absent in the vault grid, the pick-media modal and
+   * anywhere else the mockup's overlay star is not a live control — a heart
+   * that does nothing is exactly the dead control the review rule forbids.
+   */
+  onToggleFavorite?: (item: MediaDto) => void
 }) {
   const { selected } = selection
   const handleClick = useTileClick({ items, selectionMode, selection })
@@ -99,6 +106,7 @@ export function MediaGrid({
         selection={selection}
         navEnabled={navEnabled}
         thumbSrc={thumbSrc}
+        onToggleFavorite={onToggleFavorite}
       />
     )
   }
@@ -115,6 +123,7 @@ export function MediaGrid({
       selection={selection}
       navEnabled={navEnabled}
       thumbSrc={thumbSrc}
+      onToggleFavorite={onToggleFavorite}
     />
   )
 }
@@ -302,6 +311,7 @@ function PlainGrid({
   selection,
   navEnabled,
   thumbSrc,
+  onToggleFavorite,
 }: {
   items: MediaDto[]
   root: string | null
@@ -313,6 +323,7 @@ function PlainGrid({
   selection: ReturnType<typeof useSelection>
   navEnabled: boolean
   thumbSrc?: (item: MediaDto, hi: boolean) => string
+  onToggleFavorite?: (item: MediaDto) => void
 }) {
   const { containerRef, onKeyDown } = useKeyboardNav({
     items,
@@ -335,6 +346,7 @@ function PlainGrid({
           onOpen={() => onOpen(item.id)}
           onToggle={() => onToggle(item.id)}
           onContext={onContext}
+          onToggleFavorite={onToggleFavorite}
         />
       ))}
     </div>
@@ -373,6 +385,7 @@ function VirtualGrid({
   selection,
   navEnabled,
   thumbSrc,
+  onToggleFavorite,
 }: {
   items: MediaDto[]
   root: string | null
@@ -384,6 +397,7 @@ function VirtualGrid({
   selection: ReturnType<typeof useSelection>
   navEnabled: boolean
   thumbSrc?: (item: MediaDto, hi: boolean) => string
+  onToggleFavorite?: (item: MediaDto) => void
 }) {
   const { containerRef, onKeyDown, pendingFocus } = useKeyboardNav({
     items,
@@ -473,6 +487,7 @@ function VirtualGrid({
                     onOpen={() => onOpen(item.id)}
                     onToggle={() => onToggle(item.id)}
                     onContext={onContext}
+                    onToggleFavorite={onToggleFavorite}
                   />
                 )
               })}
@@ -493,6 +508,7 @@ function MediaTile({
   onOpen,
   onToggle,
   onContext,
+  onToggleFavorite,
 }: {
   item: MediaDto
   index: number
@@ -503,6 +519,7 @@ function MediaTile({
   onOpen: () => void
   onToggle: () => void
   onContext?: (item: MediaDto, event: ReactMouseEvent) => void
+  onToggleFavorite?: (item: MediaDto) => void
 }) {
   const { t } = useI18n()
   // §10.6.5 LQIP: the 200px WebP shows first, hover swaps in the 400px one
@@ -565,14 +582,24 @@ function MediaTile({
         >
           {selected ? '☑' : '☐'}
         </button>
-        <button
-          type="button"
-          className="media-tile__fav"
-          aria-label={t('media.favorite')}
-          onClick={(e) => e.stopPropagation()}
-        >
-          ♡
-        </button>
+        {/* c22/§24.2 — the ♡ toggle. Rendered only where a consumer can act on
+            it (no handler → no control, dead-control rule); `aria-pressed`
+            carries the state, the glyph only paints it. */}
+        {onToggleFavorite ? (
+          <button
+            type="button"
+            className={`media-tile__fav${item.isFavorite ? ' media-tile__fav--on' : ''}`}
+            data-testid="tile-fav"
+            aria-label={item.isFavorite ? t('media.unfavorite') : t('media.favorite')}
+            aria-pressed={item.isFavorite}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleFavorite(item)
+            }}
+          >
+            {item.isFavorite ? '♥' : '♡'}
+          </button>
+        ) : null}
       </div>
       <div className="media-tile__info">
         <span className="media-tile__name">{item.relativePath.split('/').pop()}</span>

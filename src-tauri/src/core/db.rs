@@ -481,6 +481,47 @@ pub fn media_remove(pool: &SqlitePool, ids: &[String]) -> Result<usize, DbError>
     Ok(deleted)
 }
 
+/// §14 (c22): what `media_remove` must know about a row **before** it may drop
+/// it — the row's own disk locations. The command deletes the file first and
+/// only then the row, so a delete failure leaves a row that still points at a
+/// file that exists (never the reverse, which the next scan would resurrect).
+#[derive(Debug, Clone)]
+pub struct MediaPathRow {
+    pub id: String,
+    pub relative_path: String,
+    pub thumb_path: String,
+}
+
+/// §14 (c22): the `media_remove` projection, one prepared lookup per id like
+/// `vault_items_by_id`. Ids that match no row are simply absent — deleting a
+/// row that is not there is not an error.
+pub fn media_paths_by_id(pool: &SqlitePool, ids: &[String]) -> Result<Vec<MediaPathRow>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt =
+        conn.prepare_cached("SELECT id, relative_path, thumb_path FROM media WHERE id = ?1")?;
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(row) = stmt
+            .query_row([id], |row| {
+                Ok(MediaPathRow {
+                    id: row.get(0)?,
+                    relative_path: row.get(1)?,
+                    thumb_path: row.get(2)?,
+                })
+            })
+            .optional()?
+        {
+            rows.push(row);
+        }
+    }
+    Ok(rows)
+}
+
 /// §6.6/C6 — does any of `ids` name a hidden row? The id-based commands
 /// (`media_detail`/`media_reveal`/`media_scope_video`/`media_remove`, c18) carry
 /// no `MediaScope`, so this is how they refuse a vault item while the session is
@@ -594,6 +635,30 @@ pub fn list_get(pool: &SqlitePool, id: &str) -> Result<Option<StoredList>, DbErr
         Some(row) => Ok(Some(stored_list_from_row(row)?)),
         None => Ok(None),
     }
+}
+
+/// c22/§11.5 — up to four visible member ids for the card grid cover,
+/// newest-first by captured_at (like the detail), skipping hidden members.
+pub fn list_cover_ids(
+    pool: &SqlitePool,
+    list_id: &str,
+    limit: usize,
+) -> Result<Vec<String>, DbError> {
+    let conn = pool
+        .get()
+        .map_err(|error| DbError::Pool(error.to_string()))?;
+    let mut stmt = conn.prepare(
+        "SELECT li.media_id
+         FROM list_items li
+         JOIN media m ON m.id = li.media_id
+         WHERE li.list_id = ?1 AND m.is_hidden = 0
+         ORDER BY m.captured_at DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![list_id, limit as i64], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(rows)
 }
 
 /// §7.9 — insert a new (always manual) list; `created_at` is the DB clock.

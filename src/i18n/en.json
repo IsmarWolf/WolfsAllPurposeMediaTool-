@@ -1,7 +1,6 @@
 {
   "app.name": "WolfsMedia",
   "app.tagline": "Offline media backup",
-
   "nav.primary": "Primary navigation",
   "nav.explore": "Explore",
   "nav.home": "Overview",
@@ -13,15 +12,12 @@
   "nav.settings": "Settings",
   "nav.security": "Security",
   "nav.vault": "Vault",
-
   "action.import": "Import",
   "action.ingest": "Ingest media",
-
   "appBar.dbOk": "Database healthy",
   "appBar.dbFail": "Database unavailable",
   "appBar.dbUnknown": "Checking the database",
   "appBar.rootUnknown": "Unknown root",
-
   "common.yes": "Yes",
   "common.no": "No",
   "common.working": "Working…",
@@ -29,17 +25,14 @@
   "common.close": "Close",
   "common.save": "Save",
   "common.cancel": "Cancel",
-
   "root.wolfsRootEnv": "WOLFS_ROOT variable",
   "root.markerWalk": "Marker found",
   "root.packagedAppDir": "App/ folder (no marker yet)",
   "root.unrootedFallback": "No marker (local folder)",
-
   "state.empty": "This folder is empty.",
   "state.emptyCta": "Import media to get started.",
   "state.noResults": "No results for the active filters.",
   "state.clearFilters": "Clear the filters to see everything.",
-
   "error.E_DB": "The database could not be read.",
   "error.E_ROOT": "The SSD root folder could not be used.",
   "error.E_FFMPEG": "ffmpeg is unavailable; videos will not be processed.",
@@ -49,7 +42,6 @@
   "error.E_INGEST": "The ingest stopped before finishing.",
   "error.E_UNAVAILABLE": "The operation is not available right now.",
   "error.unavailable": "The data could not be loaded.",
-
   "dash.title": "Overview",
   "dash.loading": "Loading…",
   "dash.totalItems": "Total items",
@@ -70,7 +62,6 @@
   "dash.ffmpegMissing": "ffmpeg missing",
   "dash.demoTitle": "UI states (QA)",
   "dash.demoClose": "Close demo",
-
   "media.subtitle": "Photos and videos on the SSD",
   "media.filtersL1": "Quick filters",
   "media.facetLocation": "Location",
@@ -120,15 +111,19 @@
   "media.hideFolder": "Hide folder in vault",
   "media.hideNotConfigured": "Set up the vault to hide files.",
   "media.hidden": "{count} item(s) hidden.",
+  "media.deleteTitle": "Delete media",
+  "media.deleteConfirm": "Delete {count} item(s) from disk? The files go with the records and this cannot be undone.",
+  "media.deleted": "{count} item(s) deleted.",
+  "media.deletePartial": "{count} of {total} item(s) deleted — some file may be in use by another program.",
   "common.remove": "Remove",
-
-  "lists.subtitle": "Smart lists and saved filters",
+  "lists.subtitle": "Create and organize media lists",
   "lists.indexLabel": "Lists",
   "lists.selectOne": "Select a list or create a new one.",
   "lists.newList": "New list",
+  "lists.emptyTitle": "No lists",
+  "lists.emptyCta": "Create list",
   "lists.namePlaceholder": "List name…",
   "lists.create": "Create",
-  "lists.createAndApply": "Create and apply",
   "lists.existing": "Existing lists",
   "lists.none": "No lists yet.",
   "lists.loading": "Loading lists…",
@@ -146,16 +141,6 @@
   "lists.added": "{count} item(s) added.",
   "lists.noMembers": "No items in this list.",
   "lists.remove": "Remove from list",
-  "lists.editCriteria": "Edit criteria",
-  "lists.applyCriteria": "Apply criteria (snapshot)",
-  "lists.criteriaAll": "No filters (all items)",
-  "lists.sync": "Sync",
-  "lists.synced": "List synced.",
-  "lists.applyToList": "Apply to list",
-  "lists.applyHint": "Apply the current filter to a list. The list stores the criteria and becomes smart; its members are a snapshot of right now.",
-  "lists.applied": "List updated with the current filter.",
-  "lists.snapshotApplied": "Criteria applied; the list was synced.",
-
   "backup.subtitle": "One page: USB, Wi-Fi or Local disk as the source",
   "backup.source": "Backup source",
   "backup.usb": "USB",
@@ -212,7 +197,6 @@
   "transfer.phase.listing": "Reading the device",
   "transfer.phase.copy": "Copying off the device",
   "transfer.phase.index": "Indexing into the library",
-
   "settings.subtitle": "SSD root, source and maintenance",
   "settings.originTitle": "Source",
   "settings.rootPath": "Root folder",
@@ -226,7 +210,6 @@
   "settings.recalcSame": "The root is unchanged.",
   "settings.vacuum": "Compact database",
   "settings.vacuumDone": "Database compacted.",
-
   "vault.title": "Vault",
   "vault.subtitle": "A guarded space, not a menu item",
   "vault.unconfigured": "Not configured",
@@ -273,7 +256,6 @@
   "vault.deleteTitle": "Delete permanently",
   "vault.deleteConfirm": "Delete {count} item(s) from the vault? This cannot be undone.",
   "vault.deleted": "{count} item(s) deleted.",
-
   "zone.inspector": "Inspector",
   "inspector.summary": "Summary",
   "inspector.single": "Item",
@@ -284,9 +266,28 @@
   "inspector.bulkCount": "{count} items selected",
   "inspector.open": "Open inspector",
   "inspector.closeDrawer": "Close inspector",
-
   "bulk.label": "Bulk actions",
   "bulk.count": "{count} selected",
   "bulk.clear": "Clear selection",
-  "bulk.delete": "Delete"
+  "bulk.delete": "Delete",
+  "nav.collections": "Collections",
+  "nav.organize": "Organize",
+  "common.back": "Back",
+  "common.undo": "Undo",
+  "media.unfavorite": "Unfavorite",
+  "media.collectionSubtitle": "Items in this collection",
+  "lists.addTo": "Add to list",
+  "lists.addSelection": "Add {count} selected to list",
+  "lists.addView": "Add {count} shown to list",
+  "lists.addHint": "Add {count} item(s) to a manual list.",
+  "lists.addedTo": "{count} item(s) added to \"{name}\".",
+  "lists.createAndAdd": "Create and add",
+  "collections.subtitle": "Smart collections derived from the library",
+  "collections.favorites": "Favorites",
+  "collections.screenshots": "Screenshots",
+  "collections.videos": "Videos",
+  "collections.documents": "Documents",
+  "collections.people": "People & Animals",
+  "collections.soon": "Coming soon",
+  "collections.items": "{count} items"
 }

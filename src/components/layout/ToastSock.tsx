@@ -50,6 +50,22 @@ export function ToastSock() {
       {toasts.map((toast) => (
         <div key={toast.id} className={`md-toast md-toast--${toast.kind}`}>
           <span>{toast.message}</span>
+          {/* c22/§12.4: the front-end-only `[Desfazer]`. Running it also
+              dismisses the toast — an undo that stays up invites a second click
+              at whatever it just undid. */}
+          {toast.action ? (
+            <button
+              type="button"
+              className="md-toast__action"
+              data-testid="toast-action"
+              onClick={() => {
+                toast.action?.run()
+                dismiss(toast.id)
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
           <button
             type="button"
             className="md-toast__close"

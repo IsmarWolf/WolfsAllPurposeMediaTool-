@@ -1890,7 +1890,99 @@ video.md-lightbox__image {
   align-items: start;
 }
 
-.lists__index {
+/* Listas (c22 redesign) — mirror Collections Google Photos card grid */
+.lists__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-md);
+}
+
+.lists__card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.lists__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.lists__cover {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background-color: var(--md-surface-ctr);
+  border-radius: var(--radius-lg);
+  transition: box-shadow var(--dur-micro) var(--ease-emphasized);
+}
+
+.lists__card:hover .lists__cover {
+  box-shadow: var(--shadow-hover);
+}
+
+.lists__cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lists__cover-empty {
+  background-color: var(--md-surface-ctr-high);
+}
+
+.lists__strip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: 2px;
+  height: 28%;
+  background-color: var(--md-surface-ctr-low);
+}
+
+.lists__strip-img,
+.lists__strip-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  background-color: var(--md-surface-ctr-high);
+}
+
+.lists__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-xs);
+  min-width: 0;
+}
+
+.lists__name {
+  font-size: var(--text-body-m);
+  font-weight: 500;
+  color: var(--md-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lists__count {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+.lists__detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -1901,7 +1993,7 @@ video.md-lightbox__image {
 
 .lists__item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-sm);
   min-height: 44px;
@@ -1965,10 +2057,18 @@ video.md-lightbox__image {
   flex-wrap: wrap;
 }
 
+/* The name takes the room it has, which is what pushes [Renomear]/[Apagar
+   lista] to the right edge — the quick actions sit as a group, not drifting
+   after a short title. */
 .lists__detail-head h2 {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
   font-size: var(--text-title-l);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lists__confirm {
@@ -2049,4 +2149,168 @@ video.md-lightbox__image {
 .lists__pick-count {
   font-size: var(--text-label-m);
   color: var(--md-on-surface-variant);
+}
+
+/* ---------------------------------------------------- coleções (c22 §11.10) */
+
+/* Google Photos shape (human 2026-10-19): a responsive row of large rounded
+   cards. `auto-fill` + a generous minimum keeps them side by side on a wide
+   Zone 3 and stacks them cleanly once it narrows — no media queries needed for
+   the grid itself, so the layout is as responsive as the pane allows. */
+.collections__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-gap);
+  align-content: start;
+}
+
+.collections__card-wrap {
+  min-width: 0;
+}
+
+/* The whole card is the button — cover on top, label block under it — so the
+   label is a click target, the card reads as one rounded unit, and
+   `collection-card`'s textContent carries name + count for tests. Reset
+   because it is a `<button>` dressed as a card, not a form control. */
+.collections__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* The cover carries the shape: the big rounded tile, the hover lift and the
+   selection ring — the meta text below stays quiet. */
+.collections__cover {
+  position: relative;
+  display: grid;
+  /* Lead image + a bottom strip of the next three: 1fr for the lead over a
+     fixed 1/4-height strip. An empty set shows the grey fill instead. */
+  grid-template-rows: 1fr auto;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background-color: var(--md-surface-ctr);
+  border-radius: var(--radius-lg);
+  transition: box-shadow var(--dur-micro) var(--ease-emphasized);
+}
+
+.collections__card:hover .collections__cover {
+  box-shadow: var(--shadow-hover);
+}
+
+/* Explorer-model selection (§12.6): a primary ring, never a hue change. */
+.collections__card--selected .collections__cover {
+  outline: 3px solid var(--md-primary);
+  outline-offset: -3px;
+}
+
+/* The button itself never rings — the cover does, or the ring would box the
+   label text too. */
+.collections__card:focus-visible {
+  outline: none;
+}
+
+.collections__card:focus-visible .collections__cover {
+  outline: 3px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+.collections__card--pending {
+  cursor: default;
+}
+
+.collections__card--pending:hover .collections__cover {
+  box-shadow: none;
+}
+
+.collections__cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.collections__cover-empty {
+  background-color: var(--md-surface-ctr-high);
+}
+
+/* The strip pins to the bottom of the cover: an absolute child resolves its
+   `28%` against the aspect-ratio'd cover, while the same percentage inside an
+   auto grid row is indefinite and would collapse to the thumbnails' natural
+   height. Flex (not `repeat(auto-fit, …)`) splits the width: one thumb takes
+   it all, two split it in half — no grey tracks faking photos the collection
+   does not have, and no band at all when the strip is absent (the lead fills
+   the cover). */
+.collections__strip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: 2px;
+  height: 28%;
+  background-color: var(--md-surface-ctr-low);
+}
+
+.collections__strip-img,
+.collections__strip-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  background-color: var(--md-surface-ctr-high);
+}
+
+/* A pending card is greyed with a translucent veil so the "Disponível em
+   breve" line below reads as disabled without a second colour system. */
+.collections__pending-veil {
+  position: absolute;
+  inset: 0;
+  background-color: var(--md-surface-ctr-low);
+  opacity: 0.65;
+}
+
+/* The label block sits *under* the card, Google-Photos style: strong title,
+   quiet count. */
+.collections__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-xs);
+  min-width: 0;
+}
+
+.collections__name {
+  font-size: var(--text-body-m);
+  font-weight: 500;
+  color: var(--md-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collections__count {
+  font-size: var(--text-label-m);
+  color: var(--md-on-surface-variant);
+}
+
+/* The scoped-gallery back control (§11.10 C-8d): its own left-aligned row
+   above the title — Google Photos puts back top-left, never in the actions
+   cluster on the right. The arrow is a CSS glyph, so the button's text stays
+   exactly what the tests pin ("Voltar"/"Back"). */
+.collection-back-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.collection-back::before {
+  content: '\2190';
+  margin-right: var(--space-xs);
 }

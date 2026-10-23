@@ -36,6 +36,19 @@ export function Sidebar({
       items: [
         { route: 'dashboard', labelKey: 'nav.home' },
         { route: 'media', labelKey: 'nav.media', badge: mediaCount ?? undefined },
+      ],
+    },
+    // c22/§24.1 (Google Photos shape, human 2026-10-19): Coleções and Listas
+    // leave "Explorar" and get their own group — the derived collections and the
+    // hand-made lists are two different kinds of thing, and a shared heading is
+    // what says so. The heading is "Organizar", not "Coleções": repeating the
+    // first item's own label as the group label reads as a bug, not a section.
+    // Grouping is navigation structure, not content: the C16 rule (Zone 2 =
+    // nav + guardianship) still holds.
+    {
+      headingKey: 'nav.organize',
+      items: [
+        { route: 'collections', labelKey: 'nav.collections' },
         { route: 'lists', labelKey: 'nav.lists' },
       ],
     },

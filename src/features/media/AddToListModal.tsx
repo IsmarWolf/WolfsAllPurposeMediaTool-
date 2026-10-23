@@ -3,36 +3,53 @@ import { Button } from '../../components/ui'
 import { useI18n, useToast } from '../../hooks/useContexts'
 import { useListActions, useLists } from '../../hooks/useLists'
 import { formatCount } from '../../lib/format'
-import type { FilterSpec } from '../../types/api'
 
 /**
- * §12.4 `[Aplicar à lista ▾]` — the gallery's smart-snapshot flow.
+ * §12.4 (c22 rewrite) `[Adicionar à lista]` — **manual membership only**.
  *
- * Picks an existing list or creates one, then `lists_snapshot_apply` reads the
- * **active** spec, runs it now, and replaces the list's membership. A manual
- * list that receives a snapshot becomes smart (criteria stored, §12.4); a smart
- * list is overwritten (c15 decision 4). Rendered lazily by `MediaScreen`, so its
- * `lists_list` read only happens when the human opens it.
+ * Picks an existing list or creates one, then `lists_add_items` appends the
+ * given ids. The smart-snapshot flow it replaces (`ApplyToList`, §24.1) is
+ * retired from the UI: the backend commands still exist and the frontend
+ * bindings stay callable (deprecated), but nothing in the app offers them —
+ * a list's membership is now only ever hand-picked, with the one undo the
+ * §12.4 front-end toast carries.
+ *
+ * Rendered lazily by the shell (both the `[Z3d]` header button and `[Z5b]`
+ * route through it), so the `lists_list` read only happens when the modal is
+ * actually open.
  */
-export function ApplyToList({ spec, onClose }: { spec: FilterSpec; onClose: () => void }) {
+export function AddToListModal({ ids, onClose }: { ids: string[]; onClose: () => void }) {
   const { t } = useI18n()
   const { push } = useToast()
   const { lists, loading, error } = useLists()
-  const { create, applySnapshot } = useListActions()
+  const { create, addItems, removeItems } = useListActions()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const apply = async (listId: string) => {
+  const finish = (listId: string, listName: string) => {
+    // §12.4: the undo is front-end only — it removes the same ids it just
+    // added. `lists_remove_items` is the inverse command, so no backend
+    // "undo token" exists or is needed.
+    push('success', t('lists.addedTo', { count: ids.length, name: listName }), {
+      label: t('common.undo'),
+      run: () => {
+        void removeItems(listId, ids)
+      },
+    })
+    onClose()
+  }
+
+  const add = async (listId: string, listName: string) => {
+    if (busy) return
     setBusy(true)
-    const result = await applySnapshot(listId, spec)
+    const result = await addItems(listId, ids)
     setBusy(false)
     if (result !== null) {
-      push('success', t('lists.applied'))
-      onClose()
+      finish(listId, listName)
     }
   }
 
-  const createAndApply = async () => {
+  const createAndAdd = async () => {
     const trimmed = name.trim()
     if (!trimmed || busy) {
       return
@@ -40,28 +57,29 @@ export function ApplyToList({ spec, onClose }: { spec: FilterSpec; onClose: () =
     setBusy(true)
     const created = await create(trimmed)
     if (created) {
-      const result = await applySnapshot(created.id, spec)
+      const result = await addItems(created.id, ids)
+      setBusy(false)
       if (result !== null) {
-        push('success', t('lists.applied'))
-        onClose()
+        finish(created.id, created.name)
         return
       }
+      return
     }
     setBusy(false)
   }
 
   return (
-    <div className="md-modal" role="dialog" aria-modal="true" aria-label={t('lists.applyToList')}>
+    <div className="md-modal" role="dialog" aria-modal="true" aria-label={t('lists.addTo')}>
       <div className="md-modal__backdrop" onClick={onClose} />
       <div className="md-modal__panel">
         <div className="md-drawer__header">
-          <h2>{t('lists.applyToList')}</h2>
+          <h2>{t('lists.addTo')}</h2>
           <button type="button" className="md-btn md-btn--text" onClick={onClose}>
             {t('common.close')}
           </button>
         </div>
 
-        <p className="md-modal__hint">{t('lists.applyHint')}</p>
+        <p className="md-modal__hint">{t('lists.addHint', { count: ids.length })}</p>
 
         <div className="md-drawer__section">
           <h3>{t('lists.newList')}</h3>
@@ -75,16 +93,16 @@ export function ApplyToList({ spec, onClose }: { spec: FilterSpec; onClose: () =
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  void createAndApply()
+                  void createAndAdd()
                 }
               }}
             />
             <Button
               variant="filled"
-              onClick={createAndApply}
+              onClick={createAndAdd}
               disabled={busy || name.trim().length === 0}
             >
-              {t('lists.createAndApply')}
+              {t('lists.createAndAdd')}
             </Button>
           </div>
         </div>
@@ -105,14 +123,10 @@ export function ApplyToList({ spec, onClose }: { spec: FilterSpec; onClose: () =
                     type="button"
                     className="lists__pick-item"
                     disabled={busy}
-                    onClick={() => void apply(list.id)}
+                    onClick={() => void add(list.id, list.name)}
                   >
                     <span>{list.name}</span>
-                    <span className="lists__pick-meta">
-                      {list.filterCriteria ? t('lists.kindSmart') : t('lists.kindManual')}
-                      {' · '}
-                      {formatCount(list.memberCount)}
-                    </span>
+                    <span className="lists__pick-meta">{formatCount(list.memberCount)}</span>
                   </button>
                 </li>
               ))}

@@ -19,12 +19,15 @@ export type ToastItem = {
   id: number
   kind: ToastKind
   message: string
+  /** c22/§12.4: an inline action on the toast — the front-end-only `[Desfazer]`
+   *  of "added to a list". Absent on every other toast. */
+  action?: { label: string; run: () => void }
 }
 
 export type ToastContextValue = {
   toasts: ToastItem[]
   /** `push` is imperative by design (§10.3): any module can report a problem. */
-  push: (kind: ToastKind, message: string) => void
+  push: (kind: ToastKind, message: string, action?: ToastItem['action']) => void
   dismiss: (id: number) => void
   /** Maps an `AppError` to its i18n key + pushes it, unless it is silent (§8.2). */
   pushError: (error: AppError) => void

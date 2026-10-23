@@ -42,7 +42,18 @@ pub enum ListError {
 
 /// §7.9 — all lists, sidebar order.
 pub fn list(pool: &SqlitePool) -> Result<Vec<ListDto>, ListError> {
-    db::lists_all(pool)?.into_iter().map(to_dto).collect()
+    let lists = db::lists_all(pool)?;
+    lists
+        .into_iter()
+        .map(|stored| {
+            let dto = to_dto(stored)?;
+            let covers = db::list_cover_ids(pool, &dto.id, 4)?;
+            Ok(ListDto {
+                cover_media_ids: covers,
+                ..dto
+            })
+        })
+        .collect()
 }
 
 /// §7.9 — one list with its members, or `None` when it does not exist.
@@ -51,8 +62,13 @@ pub fn detail(pool: &SqlitePool, id: &str) -> Result<Option<ListDetailDto>, List
         return Ok(None);
     };
     let members = db::list_members(pool, id)?;
+    let dto = to_dto(stored)?;
+    let covers = db::list_cover_ids(pool, &dto.id, 4)?;
     Ok(Some(ListDetailDto {
-        list: to_dto(stored)?,
+        list: ListDto {
+            cover_media_ids: covers,
+            ..dto
+        },
         members,
     }))
 }
@@ -184,6 +200,7 @@ fn to_dto(stored: db::StoredList) -> Result<ListDto, ListError> {
         filter_criteria,
         created_at: stored.created_at.unwrap_or_default(),
         member_count: stored.member_count,
+        cover_media_ids: Vec::new(),
     })
 }
 

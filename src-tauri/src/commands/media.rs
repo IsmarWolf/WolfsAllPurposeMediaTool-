@@ -328,15 +328,77 @@ pub fn media_reveal(state: State<'_, AppState>, id: String) -> Result<(), AppErr
     super::settings::reveal(parent)
 }
 
-/// §8.1 `media_remove` — delete media rows by id. The frontend always confirms
-/// first (C7/§14); this is the backend half. c18 refuses a hidden row unless Vault
-/// Mode is unlocked, so a stale selection cannot orphan a vault file.
+/// §8.1 `media_remove` — delete media by id: **the file first, the row second**
+/// (§14, human override 2026-10-20 — the c10 "rows only" rule is retired: an
+/// "[Apagar]" that leaves the bytes on disk is what the rescan then happily
+/// re-imports). The frontend always confirms first (C7); this is the backend
+/// half. c18 refuses a hidden row unless Vault Mode is unlocked, so a stale
+/// selection cannot orphan a vault file.
+///
+/// Returns how many rows were actually removed — a file that refuses to die
+/// (locked by another program) keeps its row, and the count tells the UI the
+/// difference (`media.deletePartial`). Emits `wolfs://db-changed` on success so
+/// every open grid and the Dashboard refetch (§10.5), like `media_set_favorite`.
 #[tauri::command]
-pub fn media_remove(state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, AppError> {
+pub fn media_remove(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<usize, AppError> {
     let snapshot = state.snapshot();
     let pool = snapshot.require_pool()?;
     require_visible_unless_unlocked(&state, &pool, &ids)?;
-    db::media_remove(&pool, &ids).map_err(AppError::from)
+    let removed = remove_media_files(&snapshot.resolver, &pool, &ids)?;
+    if removed > 0 {
+        let _ = app.emit(channels::DB_CHANGED, ());
+    }
+    Ok(removed)
+}
+
+/// The file half of §8.1 `media_remove` (§14, c22), split from the command so
+/// the fs/DB interplay is unit-testable without an `AppHandle`.
+///
+/// Invariant: **the row goes only when its file is gone** (or was never there).
+/// A locked file leaves its row behind — a gallery tile without its bytes is
+/// bad, a rescan resurrecting a file the human deleted is worse (§14). The
+/// thumbnails (both slots, §6.7) are best-effort: their failure never keeps the
+/// media row alive, it only costs a stale thumb file.
+fn remove_media_files(
+    resolver: &PathResolver,
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<usize, AppError> {
+    let rows = db::media_paths_by_id(pool, ids)?;
+    let mut doomed: Vec<String> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let removed = match resolver.rel_to_abs(&row.relative_path) {
+            Ok(abs) if abs.exists() => std::fs::remove_file(&abs).is_ok(),
+            // Absent already: a dead row a rescan would drop anyway — deleting
+            // it is honest, and nothing on disk can resurrect it.
+            Ok(_) => true,
+            // A path that does not resolve to this volume: keep the row rather
+            // than delete data we cannot even name.
+            Err(_) => false,
+        };
+        if !removed {
+            continue;
+        }
+        if let Ok(thumb) = resolver.rel_to_abs(&row.thumb_path) {
+            let _ = std::fs::remove_file(thumb);
+        }
+        // The 200px slot of the same file — `None` for a vault thumb (no /400/
+        // in `.vault/thumbs/...`, §12.5.2), which never had a 200 twin.
+        if let Some(small) = thumbs::thumb_200_of(&row.thumb_path)
+            && let Ok(small_abs) = resolver.rel_to_abs(&small)
+        {
+            let _ = std::fs::remove_file(small_abs);
+        }
+        doomed.push(row.id);
+    }
+    if doomed.is_empty() {
+        return Ok(0);
+    }
+    Ok(db::media_remove(pool, &doomed)?)
 }
 
 /// §8.1 `media_set_favorite` (Phase 6, §24.2) — set the ♡ flag on a batch.
@@ -370,4 +432,175 @@ pub fn media_set_favorite(
 fn ffmpeg_path(snapshot: &crate::state::Snapshot) -> Option<PathBuf> {
     let candidate = snapshot.resolver.ffmpeg_exe();
     candidate.is_file().then_some(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::paths::RootSource;
+    use std::path::Path;
+
+    /// The real boot order of §5.5: the tree first, then the database.
+    fn booted(root: &Path) -> PathResolver {
+        let resolver = PathResolver::new(root.to_path_buf(), RootSource::MarkerWalk);
+        crate::core::layout::ensure(&resolver).unwrap();
+        resolver
+    }
+
+    fn open_pool(root: &Path) -> SqlitePool {
+        db::open(&booted(root)).unwrap()
+    }
+
+    /// One visible image row — every column the inserts elsewhere also spell out,
+    /// so the fixture never leans on a column default silently changing.
+    fn insert(pool: &SqlitePool, id: &str, rel: &str, thumb: &str) {
+        pool.get()
+            .unwrap()
+            .execute(
+                "INSERT INTO media (id, relative_path, thumb_path, file_hash, file_size, file_type,
+                                    captured_at, added_at, has_metadata, is_hidden, device_name)
+                 VALUES (?1, ?2, ?3, ?4, 1000, 'image', '2024-03-15 10:00:00',
+                         '2026-06-01T09:00:00', 1, 0, 'PC')",
+                rusqlite::params![id, rel, thumb, format!("hash-{id}")],
+            )
+            .unwrap();
+    }
+
+    fn write(root: &Path, rel: &str) {
+        let abs = root.join(rel);
+        std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        std::fs::write(abs, b"bytes").unwrap();
+    }
+
+    fn row_count(pool: &SqlitePool, id: &str) -> i64 {
+        pool.get()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM media WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    /// §14/c22 — the row, the file and both thumbnail slots go together, file
+    /// first. This is the invariant the whole change exists for: before it,
+    /// `[Apagar]` only unlinked the row and the next scan re-imported the very
+    /// same bytes.
+    #[test]
+    fn deleting_a_row_removes_its_file_and_both_thumbnail_slots() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = booted(dir.path());
+        let pool = open_pool(dir.path());
+
+        let (rel, thumb_400) = ("Media/PC/2024/03/IMG_1.jpg", "Thumbnails/400/gone.webp");
+        let thumb_200 = thumb_400.replacen("/400/", "/200/", 1);
+        insert(&pool, "a1", rel, thumb_400);
+        write(dir.path(), rel);
+        write(dir.path(), thumb_400);
+        write(dir.path(), &thumb_200);
+
+        let removed = remove_media_files(&resolver, &pool, &["a1".into()]).unwrap();
+        assert_eq!(removed, 1);
+        assert!(
+            !dir.path().join(rel).exists(),
+            "the media file itself is gone"
+        );
+        assert!(!dir.path().join(thumb_400).exists());
+        assert!(
+            !dir.path().join(thumb_200).exists(),
+            "both slots, one file (§6.7)"
+        );
+        assert_eq!(row_count(&pool, "a1"), 0, "row last, after the bytes");
+    }
+
+    /// A row whose file was already lost (an interrupted move, a human with an
+    /// external editor) is a dead row: it must drop, or `[Apagar]` would report
+    /// a failure for a file that is not there. Nothing on disk resurrects it.
+    #[test]
+    fn a_row_whose_file_is_already_absent_still_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = booted(dir.path());
+        let pool = open_pool(dir.path());
+        insert(
+            &pool,
+            "a2",
+            "Media/PC/2024/03/never_existed.jpg",
+            "Thumbnails/400/a2.webp",
+        );
+
+        let removed = remove_media_files(&resolver, &pool, &["a2".into()]).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(row_count(&pool, "a2"), 0);
+    }
+
+    /// A file that refuses to go keeps its row: the gallery may show a tile
+    /// whose bytes are unremovable, but the inverse would let a scan resurrect
+    /// a file the human just deleted (§14). The refusal is real, not simulated:
+    /// the handle below is opened **without** `FILE_SHARE_DELETE`, which is
+    /// exactly the state a non-Rust program (or an AV scanner) leaves a file in
+    /// — and `DeleteFile` then fails with a sharing violation, as it should.
+    /// (A read-only attribute would *not* do: Rust's own `remove_file` clears
+    /// it first, which this test also proved before the share mode replaced it.)
+    #[test]
+    fn a_file_that_refuses_to_go_keeps_its_row() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = booted(dir.path());
+        let pool = open_pool(dir.path());
+
+        let rel = "Media/PC/2024/03/locked.jpg";
+        insert(&pool, "a3", rel, "Thumbnails/400/a3.webp");
+        write(dir.path(), rel);
+        let abs = dir.path().join(rel);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1) // FILE_SHARE_READ — no FILE_SHARE_DELETE
+            .open(&abs)
+            .unwrap();
+
+        let removed = remove_media_files(&resolver, &pool, &["a3".into()]).unwrap();
+        assert_eq!(removed, 0, "undeletable file, no row dropped");
+        assert!(abs.exists());
+        assert_eq!(row_count(&pool, "a3"), 1, "the row still names the file");
+
+        drop(held);
+        let removed = remove_media_files(&resolver, &pool, &["a3".into()]).unwrap();
+        assert_eq!(removed, 1, "the moment the file can go, so does the row");
+        assert_eq!(row_count(&pool, "a3"), 0);
+    }
+
+    /// The Cofre's own `[C-6i Apagar def.]` runs through this same command, so
+    /// a hidden row deletes from the vault mirror (`.vault/items/...`) — whose
+    /// thumb (`.vault/thumbs/...`) never had a 200 twin to chase (§12.5.2).
+    #[test]
+    fn a_vault_row_deletes_from_the_mirror_without_a_200_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = booted(dir.path());
+        let pool = open_pool(dir.path());
+
+        let rel = ".vault/items/2024/03/secret.jpg";
+        let thumb = ".vault/thumbs/h1.webp";
+        insert(&pool, "v1", rel, thumb);
+        write(dir.path(), rel);
+        write(dir.path(), thumb);
+
+        let removed = remove_media_files(&resolver, &pool, &["v1".into()]).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!dir.path().join(rel).exists());
+        assert!(!dir.path().join(thumb).exists());
+        assert_eq!(row_count(&pool, "v1"), 0);
+    }
+
+    /// Ids that match no row are absent, not an error; an empty batch is a no-op.
+    #[test]
+    fn unknown_ids_are_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = booted(dir.path());
+        let pool = open_pool(dir.path());
+        assert_eq!(
+            remove_media_files(&resolver, &pool, &["ghost".into()]).unwrap(),
+            0
+        );
+        assert_eq!(remove_media_files(&resolver, &pool, &[]).unwrap(), 0);
+    }
 }

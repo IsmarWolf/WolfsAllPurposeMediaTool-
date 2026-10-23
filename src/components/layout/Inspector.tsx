@@ -23,6 +23,8 @@ export function Inspector({
   onDrawerChange,
   vaultConfigured = false,
   onHideSelected,
+  favoriteOn = null,
+  onToggleFavorite,
 }: {
   mode: 'summary' | 'single' | 'bulk' | 'none'
   count: number
@@ -33,6 +35,13 @@ export function Inspector({
   /** §11.8 `[Z4e Ocultar no cofre]` renders only when the vault is configured. */
   vaultConfigured?: boolean
   onHideSelected?: () => void
+  /**
+   * c22/§24.2 [Z4h]: the single item's favorite state. `null` while the shell's
+   * `media_detail` read is in flight (or off the media surface entirely) — the
+   * button then does not render, rather than rendering with a guessed flag.
+   */
+  favoriteOn?: boolean | null
+  onToggleFavorite?: () => void
 }) {
   const { t } = useI18n()
   const panelId = useId()
@@ -136,6 +145,20 @@ export function Inspector({
           <>
             <SkeletonBlock height={160} />
             <SkeletonBlock height={12} width="70%" />
+            {/* c22/§24.2 [Z4h] — the inspector's own favorite toggle. Rendered
+                only once the shell's detail read has landed (`favoriteOn` is
+                a boolean), so the control never paints a guessed flag. */}
+            {favoriteOn !== null && onToggleFavorite ? (
+              <button
+                type="button"
+                className="md-btn md-btn--tonal"
+                data-testid="z4h-fav"
+                aria-pressed={favoriteOn}
+                onClick={onToggleFavorite}
+              >
+                {favoriteOn ? t('media.unfavorite') : t('media.favorite')}
+              </button>
+            ) : null}
             {vaultConfigured ? (
               // §11.8 [Z4e] — the quick hide control. It delegates to the same
               // shell handler as [C-4j]/[Z5d], so a locked vault routes to the

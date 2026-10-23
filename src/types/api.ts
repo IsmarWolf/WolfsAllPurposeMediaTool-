@@ -254,6 +254,8 @@ export interface ListDto {
   filterCriteria: FilterSpec | null
   createdAt: string
   memberCount: number
+  /** c22/§11.5: up to four visible member ids for the card grid cover. */
+  coverMediaIds?: string[]
 }
 
 /**

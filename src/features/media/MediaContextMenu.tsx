@@ -25,14 +25,20 @@ const VIEWPORT_MARGIN = 8
 export function MediaContextMenu({
   target,
   vaultConfigured,
+  isFavorite = false,
   onOpen,
   onHide,
+  onToggleFavorite,
   onClose,
 }: {
   target: ContextTarget
   vaultConfigured: boolean
+  /** c22/§24.2: the item's current flag, so the menu can say Favoritar vs Desfavoritar. */
+  isFavorite?: boolean
   onOpen: (id: string) => void
   onHide: (id: string) => void
+  /** Absent → the favorite item is not rendered (dead-control rule, as ever). */
+  onToggleFavorite?: (id: string) => void
   onClose: () => void
 }) {
   const { t } = useI18n()
@@ -116,6 +122,21 @@ export function MediaContextMenu({
       >
         {t('media.openFolder')}
       </button>
+      {/* c22/§24.2 — Favoritar / Desfavoritar, mirroring the mockup's star. */}
+      {onToggleFavorite ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="md-ctxmenu__item"
+          data-testid="ctx-favorite"
+          onClick={() => {
+            onClose()
+            onToggleFavorite(target.id)
+          }}
+        >
+          {isFavorite ? t('media.unfavorite') : t('media.favorite')}
+        </button>
+      ) : null}
       {vaultConfigured ? (
         <button
           type="button"

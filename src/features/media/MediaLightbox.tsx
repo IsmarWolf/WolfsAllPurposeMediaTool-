@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { useI18n, useToast } from '../../hooks/useContexts'
 import { useAsync } from '../../hooks/useAsync'
+import { useSetFavorite } from '../../hooks/useFavorites'
 import { toAppError } from '../../lib/errors'
 import { mediaDetail, mediaReveal, mediaScopeVideo } from '../../lib/ipc'
 import { formatBytes } from '../../lib/format'
@@ -65,6 +66,13 @@ export function MediaLightbox({
   const { data, loading, error } = useAsync<MediaDto | null>(() => mediaDetail(id), [id])
   const [videoScoped, setVideoScoped] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const setFavorite = useSetFavorite()
+  // c22/§24.2 [C-4l]: `mediaDetail` is not refetched on toggle (the command
+  // resolves the new count, not the row), so the button keeps a same-session
+  // override over the fetched flag. A `←/→` step remounts the lightbox by id
+  // and reads the fresh row anyway.
+  const [favOverride, setFavOverride] = useState<boolean | null>(null)
+  const favoriteOn = favOverride ?? data?.isFavorite ?? false
 
   useEffect(() => {
     // The lightbox mounts fresh for every open (MediaScreen keys it by id), so
@@ -131,6 +139,14 @@ export function MediaLightbox({
       pushError(toAppError(raw))
     }
   }, [id, pushError])
+
+  const toggleFavorite = useCallback(async () => {
+    const next = !favoriteOn
+    const ok = await setFavorite([id], next)
+    // Only a confirmed write flips the button: an optimistic flip on failure
+    // would leave the heart lying until the next remount.
+    if (ok) setFavOverride(next)
+  }, [favoriteOn, id, setFavorite])
 
   if (loading) {
     return (
@@ -220,6 +236,17 @@ export function MediaLightbox({
             <dd>{data.location?.city ? `${data.location.city}, ${data.location.country}` : '—'}</dd>
           </dl>
           <div className="md-lightbox__actions">
+            {/* c22/§24.2 [C-4l] — the lightbox's own favorite toggle. Tonal so
+                it never competes with the hide controls' danger role. */}
+            <button
+              type="button"
+              className="md-btn md-btn--tonal"
+              data-testid="c-4l-fav"
+              aria-pressed={favoriteOn}
+              onClick={() => void toggleFavorite()}
+            >
+              {favoriteOn ? t('media.unfavorite') : t('media.favorite')}
+            </button>
             <button type="button" className="md-btn md-btn--tonal" onClick={handleReveal}>
               {t('media.openFolder')}
             </button>

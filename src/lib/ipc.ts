@@ -208,9 +208,10 @@ export const listsAddItems = (payload: ListItemsDto) => call<void>('lists_add_it
 export const listsRemoveItems = (payload: ListItemsDto) =>
   call<void>('lists_remove_items', { payload })
 
-/** §8.1 `lists_snapshot_apply` — store the active spec and replace membership. */
+/** @deprecated c22/§24.1 — retired from the UI; the backend command still
+ *  exists and this binding stays callable, but no screen offers it. */
 export const listsSnapshotApply = (payload: ListSnapshotApplyDto) =>
   call<void>('lists_snapshot_apply', { payload })
 
-/** §8.1 `lists_snapshot_sync` — re-run the stored criteria and re-sync members. */
+/** @deprecated c22/§24.1 — see `listsSnapshotApply`. */
 export const listsSnapshotSync = (id: string) => call<void>('lists_snapshot_sync', { id })

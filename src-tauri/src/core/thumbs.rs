@@ -699,7 +699,10 @@ fn rename_replace(from: &Path, to: &Path) -> Result<(), ThumbError> {
 
 /// §4.1/§6.7: `Thumbnails/400/...` → `Thumbnails/200/...`. `None` when the row
 /// does not follow the convention — a bug upstream that must fail loudly.
-fn thumb_200_of(thumb_400: &str) -> Option<String> {
+///
+/// `pub(crate)` in c22: `commands::media::media_remove` deletes both slots of
+/// the one thumbnail file next to the media file itself (§14).
+pub(crate) fn thumb_200_of(thumb_400: &str) -> Option<String> {
     let swapped = thumb_400.replacen("/400/", "/200/", 1);
     (swapped != thumb_400).then_some(swapped)
 }

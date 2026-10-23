@@ -175,6 +175,12 @@ pub struct LocationDto {
 /// [`FilterSpec`] (§7.9). The JSON is the §22 flat spec, always normalized to
 /// `scope = standard` before it is stored, so a list can never capture hidden
 /// media (C6 — see §12.5.6).
+///
+/// c22/§11.5: `cover_media_ids` feeds the Google Photos card grid ([C-5a]) —
+/// up to four visible thumbnails, newest-first by the order members were added
+/// or just the grid order the detail would show (we take the first four visible
+/// members). A manual list has real covers; a legacy smart list kept its frozen
+/// members and carries covers too.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ListDto {
@@ -183,6 +189,8 @@ pub struct ListDto {
     pub filter_criteria: Option<serde_json::Value>,
     pub created_at: String,
     pub member_count: i64,
+    #[serde(default)]
+    pub cover_media_ids: Vec<String>,
 }
 
 /// §7.1 `ListDetailDto` — a list plus its members, for the §11.5 right pane.
@@ -526,6 +534,7 @@ mod tests {
             filter_criteria: Some(serde_json::json!({ "scope": "standard" })),
             created_at: "2026-10-15 10:00:00".into(),
             member_count: 3,
+            cover_media_ids: vec!["a1".into(), "a2".into()],
         };
         let json = serde_json::to_string(&list).unwrap();
         assert!(

@@ -34,6 +34,19 @@ const VERSIONS = { appVersion: '0.1.0', os: 'windows', arch: 'x86_64' }
 /** What the native Windows folder dialog "confirms" — §11.3's Disco-local source. */
 const PICKED = 'C:\\Users\\Ismar\\Pictures\\Familia'
 
+/**
+ * c21's five smart collections as `collections_list` returns them (§24.2): the
+ * two Phase-8 keys are count-0 with no cover, which is exactly how the card
+ * grid recognises them as "disponível em breve".
+ */
+const COLLECTIONS = [
+  { key: 'favorites', labelKey: 'collections.favorites', count: 3, coverMediaIds: ['g1', 'g2'] },
+  { key: 'screenshots', labelKey: 'collections.screenshots', count: 2, coverMediaIds: ['g1'] },
+  { key: 'videos', labelKey: 'collections.videos', count: 1, coverMediaIds: ['g2'] },
+  { key: 'documents', labelKey: 'collections.documents', count: 0, coverMediaIds: [] },
+  { key: 'people', labelKey: 'collections.people', count: 0, coverMediaIds: [] },
+]
+
 // Both mocks are hoisted above these declarations, so each factory builds its
 // own `vi.fn()` and the module under test receives the very same instance the
 // test asserts on. A `const` captured from the test body would be in the TDZ
@@ -115,6 +128,17 @@ function defaultMock(command: string, _args?: unknown): unknown {
     case 'lists_snapshot_apply':
     case 'lists_snapshot_sync':
       return null
+    // Collections (c21 backend / c22 UI) — the card grid and the scoped gallery.
+    case 'collections_list':
+      return COLLECTIONS
+    case 'collection_open':
+      return MEDIA_PAGE
+    case 'media_set_favorite':
+      return { changed: ((_args as { ids?: string[] })?.ids ?? []).length }
+    // c22/§14: `media_remove` answers with the rows it actually removed —
+    // the full batch here, so a plain confirm shows the success toast.
+    case 'media_remove':
+      return ((_args as { ids?: string[] })?.ids ?? []).length
     // The Backup screen mounts the USB hook for every tab (the job lives in the
     // Rust `JobRegistry`, so the subscription must not depend on which tab is
     // open). The truthful default in a test is an empty cable.
@@ -1821,6 +1845,11 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
     fireEvent.click(lists)
   }
 
+  async function openListDetail() {
+    await openLists()
+    fireEvent.click((await screen.findAllByTestId('lists-index-item'))[0])
+  }
+
   async function openMedia() {
     await renderShell()
     const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
@@ -1829,7 +1858,7 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
     fireEvent.click(media)
   }
 
-  it('renders the index with a manual/smart badge and the selected list members', async () => {
+  it('renders the index and the selected list’s members', async () => {
     withLists()
     await openLists()
 
@@ -1838,24 +1867,25 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
       expect.stringContaining('Viagens'),
       expect.stringContaining('2024'),
     ])
-    // The first list is auto-selected; a manual list shows its members.
+    fireEvent.click(items[0])
     expect((await screen.findByTestId('lists-detail-name')).textContent).toBe('Viagens')
     expect(screen.getByTestId('lists-members')).not.toBeNull()
     expect(screen.getAllByTestId('lists-member')).toHaveLength(1)
   })
 
-  it('a smart list shows its stored criteria as chips and the smart bar', async () => {
+  it('a legacy smart list renders as a plain list — no criteria, no smart bar (§24.1)', async () => {
     withLists()
     await openLists()
     fireEvent.click((await screen.findAllByTestId('lists-index-item'))[1])
 
-    const criteria = await screen.findByTestId('lists-criteria')
-    // Rendered by the same helper as the gallery chips (§15 parity).
-    expect(within(criteria).getByText('Localização: Paris')).not.toBeNull()
-    expect(within(criteria).getByText('Tipo: image')).not.toBeNull()
-    expect(screen.getByTestId('lists-smartbar')).not.toBeNull()
-    // A smart list never offers the manual picker.
-    expect(screen.queryByTestId('lists-add-media')).toBeNull()
+    await screen.findByTestId('lists-detail-name')
+    // c22 retired the snapshot surface: neither the criteria chips `[C-5h]` nor
+    // the smart bar `[C-5f]` exists, and the picker is offered like on any list.
+    expect(screen.queryByTestId('lists-criteria')).toBeNull()
+    expect(screen.queryByTestId('lists-smartbar')).toBeNull()
+    expect(screen.getByTestId('lists-add-media')).not.toBeNull()
+    expect(screen.getByTestId('lists-members-empty')).not.toBeNull()
+    expect(screen.getByTestId('lists-info').textContent).toBe('0 membro(s)')
   })
 
   it('creates a list and selects the created row', async () => {
@@ -1883,11 +1913,14 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
       const call = invokeMock.mock.calls.find(([command]) => command === 'lists_create')
       expect(call?.[1]).toEqual({ payload: { name: 'Nova' } })
     })
+    // Opens the new list in detail view
+    await screen.findByTestId('lists-detail-name')
   })
 
   it('renames the active list through lists_update', async () => {
     withLists()
-    await openLists()
+    await openListDetail()
+    // Wait for detail to render
     await screen.findByTestId('lists-detail-name')
 
     fireEvent.click(screen.getByTestId('lists-rename'))
@@ -1900,45 +1933,68 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
     })
   })
 
-  it('[Aplicar à lista] snapshots the gallery’s active spec into an existing list (§12.4)', async () => {
-    withLists()
-    await openMedia()
-    await screen.findByRole('button', { name: 'Aplicar à lista' })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar à lista' }))
-    // The picker reads the index, then applying replaces the list's membership.
-    fireEvent.click(await screen.findByRole('button', { name: /Viagens/ }))
-
-    await waitFor(() => {
-      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_apply')
-      expect(call?.[1]).toEqual({
-        payload: { listId: 'l1', spec: expect.objectContaining({ scope: 'standard' }) },
-      })
-    })
-  })
-
-  it('[Criar e aplicar] makes the list and snapshots into it in one step', async () => {
+  it('[Z3d] adds what is on screen to a list through lists_add_items (§12.4)', async () => {
     withLists()
     invokeMock.mockImplementation(async (command: string, args?: unknown) => {
-      if (command === 'lists_create') {
-        return { ...LIST_MANUAL, id: 'l9', name: 'Nova' }
+      if (command === 'media_query') {
+        return MEDIA_PAGE
       }
       if (command === 'lists_list') {
         return [LIST_MANUAL]
       }
+      if (command === 'lists_detail') {
+        return DETAIL_MANUAL
+      }
       return defaultMock(command, args)
     })
     await openMedia()
-    await screen.findByRole('button', { name: 'Aplicar à lista' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar à lista' }))
-    fireEvent.change(await screen.findByLabelText('Nova lista'), { target: { value: 'Nova' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Criar e aplicar' }))
+    // No selection: the button offers the whole loaded page (§12.4 "add what I
+    // am looking at"), never the retired snapshot of the *spec*.
+    const z3d = await screen.findByTestId('z3d-add-list')
+    expect(z3d.textContent).toContain('Adicionar 2 vistos à lista')
+    fireEvent.click(z3d)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Viagens/ }))
 
     await waitFor(() => {
-      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_apply')
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_add_items')
       expect(call?.[1]).toEqual({
-        payload: { listId: 'l9', spec: expect.objectContaining({ scope: 'standard' }) },
+        payload: { listId: 'l1', mediaIds: ['g1', 'g2'] },
+      })
+    })
+  })
+
+  it('[Criar e adicionar] makes a list and appends the page in one step (§12.4)', async () => {
+    withLists()
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      if (command === 'lists_create') {
+        const name = (args as { payload: { name: string } }).payload.name
+        return { ...LIST_MANUAL, id: 'l9', name, memberCount: 0 }
+      }
+      if (command === 'lists_list') {
+        return [LIST_MANUAL]
+      }
+      if (command === 'lists_detail') {
+        return { ...DETAIL_MANUAL, id: 'l9', name: 'Nova' }
+      }
+      return defaultMock(command, args)
+    })
+    await openMedia()
+
+    fireEvent.click(await screen.findByTestId('z3d-add-list'))
+    fireEvent.change(await screen.findByLabelText('Nova lista'), { target: { value: 'Nova' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar e adicionar' }))
+
+    await waitFor(() => {
+      const created = invokeMock.mock.calls.find(([command]) => command === 'lists_create')
+      expect(created?.[1]).toEqual({ payload: { name: 'Nova' } })
+      const added = invokeMock.mock.calls.find(([command]) => command === 'lists_add_items')
+      expect(added?.[1]).toEqual({
+        payload: { listId: 'l9', mediaIds: ['g1', 'g2'] },
       })
     })
   })
@@ -1956,7 +2012,7 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
       }
       return defaultMock(command, args)
     })
-    await openLists()
+    await openListDetail()
 
     fireEvent.click(await screen.findByTestId('lists-add-media'))
     const tiles = await screen.findAllByTestId('lists-pick-media-grid')
@@ -1972,17 +2028,303 @@ describe('Listas (c16) — index, snapshot builder, pick-media (§11.5/§12.4)',
     })
   })
 
-  it('[Sincronizar] re-runs a smart list’s stored criteria (§11.5 [C-5f])', async () => {
+  it('[Desfazer] in the toast removes the ids it just added (§12.4, front-end only)', async () => {
     withLists()
-    await openLists()
-    fireEvent.click((await screen.findAllByTestId('lists-index-item'))[1])
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      if (command === 'lists_list') {
+        return [LIST_MANUAL]
+      }
+      if (command === 'lists_detail') {
+        return DETAIL_MANUAL
+      }
+      return defaultMock(command, args)
+    })
+    await openMedia()
 
-    fireEvent.click(await screen.findByTestId('lists-sync'))
+    fireEvent.click(await screen.findByTestId('z3d-add-list'))
+    fireEvent.click(await screen.findByRole('button', { name: /Viagens/ }))
+
+    const undo = await screen.findByTestId('toast-action')
+    expect(undo.textContent).toBe('Desfazer')
+    fireEvent.click(undo)
 
     await waitFor(() => {
-      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_snapshot_sync')
-      expect(call?.[1]).toEqual({ id: 'l2' })
+      const call = invokeMock.mock.calls.find(([command]) => command === 'lists_remove_items')
+      expect(call?.[1]).toEqual({
+        payload: { listId: 'l1', mediaIds: ['g1', 'g2'] },
+      })
     })
+  })
+})
+
+describe('Coleções (c22) — cards, scoped gallery and the way back (§11.10)', () => {
+  const shellRoute = () => document.querySelector('.shell')?.getAttribute('data-route')
+
+  async function openCollections() {
+    await renderShell()
+    const nav = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Coleções'),
+    ) as HTMLElement
+    fireEvent.click(nav)
+    await screen.findByTestId('collections-grid')
+  }
+
+  it('lists the five cards with counts, the two Phase-8 ones as coming', async () => {
+    await openCollections()
+
+    const cards = await screen.findAllByTestId('collection-card')
+    expect(cards.map((card) => card.getAttribute('data-key'))).toEqual([
+      'favorites',
+      'screenshots',
+      'videos',
+      'documents',
+      'people',
+    ])
+    expect(cards[0].textContent).toContain('Favoritos')
+    expect(cards[0].textContent).toContain('3')
+    // A pending card says so and never opens — no dead click on a count-0 key.
+    expect(cards[3].getAttribute('aria-disabled')).toBe('true')
+    expect(cards[3].textContent).toContain('Disponível em breve')
+    fireEvent.click(cards[3])
+    fireEvent.doubleClick(cards[3])
+    expect(shellRoute()).toBe('collections')
+    expect(invokeMock.mock.calls.some(([command]) => command === 'collection_open')).toBe(false)
+  })
+
+  it('opens one into the scoped gallery, and [Voltar] returns (C-8c/C-8d)', async () => {
+    await openCollections()
+
+    fireEvent.doubleClick((await screen.findAllByTestId('collection-card'))[0])
+    expect(shellRoute()).toBe('media')
+
+    // The predicate belongs to the backend (C-8c): the gallery runs
+    // `collection_open` with the key, never a hand-built spec.
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'collection_open')
+      expect(call?.[1]).toEqual({
+        payload: { key: 'favorites', spec: expect.objectContaining({ scope: 'standard' }) },
+      })
+    })
+    expect(invokeMock.mock.calls.some(([command]) => command === 'media_query')).toBe(false)
+    expect((await screen.findByTestId('collection-back')).textContent).toBe('Voltar')
+
+    fireEvent.click(await screen.findByTestId('collection-back'))
+    await screen.findByTestId('collections-grid')
+    expect(shellRoute()).toBe('collections')
+  })
+
+  it('the sidebar Mídia click leaves the collection for the whole gallery (C-8f)', async () => {
+    await openCollections()
+    fireEvent.doubleClick((await screen.findAllByTestId('collection-card'))[0])
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.some(([command]) => command === 'collection_open')).toBe(true),
+    )
+    const before = invokeMock.mock.calls.filter(([command]) => command === 'media_query').length
+
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+
+    // A nav item means "the whole gallery": the scope is dropped, so the query
+    // is `media_query` again and the back control is gone.
+    await waitFor(() => {
+      const after = invokeMock.mock.calls.filter(([command]) => command === 'media_query').length
+      expect(after).toBeGreaterThan(before)
+    })
+    expect(screen.queryByTestId('collection-back')).toBeNull()
+    expect(shellRoute()).toBe('media')
+  })
+})
+
+describe('Favoritos (c22) — ♡ on tile, menu, lightbox and the bars (§24.2)', () => {
+  const FAV_PAGE = {
+    ...MEDIA_PAGE,
+    items: MEDIA_PAGE.items.map((item) => ({ ...item, isFavorite: true })),
+  }
+
+  async function openGallery(page = MEDIA_PAGE) {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return page
+      }
+      return defaultMock(command, args)
+    })
+    await renderShell()
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+    await screen.findAllByTestId('media-tile')
+  }
+
+  it('the tile heart sets the flag on that one item', async () => {
+    await openGallery()
+
+    fireEvent.click((await screen.findAllByTestId('tile-fav'))[0])
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_set_favorite')
+      expect(call?.[1]).toEqual({ ids: ['g1'], on: true })
+    })
+  })
+
+  it('the tile context menu carries Favoritar (mockup `#ctxmenu`)', async () => {
+    await openGallery()
+
+    fireEvent.contextMenu(screen.getAllByTestId('media-tile')[0])
+    const item = await screen.findByTestId('ctx-favorite')
+    expect(item.textContent).toBe('Favoritar')
+    fireEvent.click(item)
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_set_favorite')
+      expect(call?.[1]).toEqual({ ids: ['g1'], on: true })
+    })
+    expect(screen.queryByTestId('ctx-favorite')).toBeNull()
+  })
+
+  it('[C-4l] the lightbox toggle flags the photo and flips its own label', async () => {
+    await openGallery()
+
+    fireEvent.doubleClick(screen.getAllByTestId('media-tile')[0])
+    const toggle = await screen.findByTestId('c-4l-fav')
+    expect(toggle.textContent).toBe('Favoritar')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(toggle)
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_set_favorite')
+      expect(call?.[1]).toEqual({ ids: ['g1'], on: true })
+    })
+    // The same-session override flips the button without a re-read (§24.2).
+    // It lands one microtask after the invoke resolves, so waiting on the
+    // call alone can read the button before the state update renders it.
+    await waitFor(() => {
+      expect(screen.getByTestId('c-4l-fav').textContent).toBe('Desfavoritar')
+    })
+  })
+
+  it('[Z4h] the inspector flags the single selected item', async () => {
+    await openGallery()
+
+    const tile = screen.getAllByTestId('media-tile')[0]
+    fireEvent.click(within(tile).getByRole('button', { name: 'Selecionar' }))
+
+    const toggle = await screen.findByTestId('z4h-fav')
+    expect(toggle.textContent).toBe('Favoritar')
+    fireEvent.click(toggle)
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_set_favorite')
+      expect(call?.[1]).toEqual({ ids: ['g1'], on: true })
+    })
+  })
+
+  it('[Z5f] acts on the whole selection, and reads Desfavoritar when all are on', async () => {
+    await openGallery(FAV_PAGE)
+
+    const tile = screen.getAllByTestId('media-tile')[0]
+    fireEvent.click(within(tile).getByRole('button', { name: 'Selecionar' }))
+
+    const toggle = await screen.findByTestId('z5f-fav')
+    expect(toggle.textContent).toBe('Desfavoritar')
+    fireEvent.click(toggle)
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_set_favorite')
+      expect(call?.[1]).toEqual({ ids: ['g1'], on: false })
+    })
+  })
+})
+
+describe('Apagar (c22) — [Z5e] confirms, then deletes for real (§14)', () => {
+  /** The Favoritos describe's opener, reused: a gallery with one selectable tile. */
+  async function openGallery() {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      return defaultMock(command, args)
+    })
+    await renderShell()
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+    await screen.findAllByTestId('media-tile')
+  }
+
+  function selectFirstTile() {
+    const tile = screen.getAllByTestId('media-tile')[0]
+    fireEvent.click(within(tile).getByRole('button', { name: 'Selecionar' }))
+  }
+
+  it('[Z5e] asks first, then calls media_remove with the selection and clears the bar', async () => {
+    await openGallery()
+    selectFirstTile()
+
+    fireEvent.click(await screen.findByTestId('z5e-delete'))
+
+    // C7: the bar button only *opens* the confirm — nothing has been deleted.
+    expect(invokeMock.mock.calls.some(([command]) => command === 'media_remove')).toBe(false)
+    const dialog = await screen.findByTestId('media-delete-dialog')
+    expect(dialog.textContent).toContain('Apagar mídia')
+    expect(dialog.textContent).toContain('do disco')
+
+    fireEvent.click(screen.getByTestId('media-delete-confirm'))
+
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find(([command]) => command === 'media_remove')
+      expect(call?.[1]).toEqual({ ids: ['g1'] })
+    })
+    const toast = await screen.findByText('1 item(ns) apagado(s).')
+    expect(toast.closest('.md-toast--success')).not.toBeNull()
+    // The selection went with it, so the bar leaves with it.
+    await waitFor(() => expect(screen.queryByTestId('z5e-delete')).toBeNull())
+  })
+
+  it('a partial delete warns instead of pretending everything went (§14)', async () => {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'media_query') {
+        return MEDIA_PAGE
+      }
+      // The backend kept a row: its file refused to go (locked by a program).
+      if (command === 'media_remove') {
+        return 0
+      }
+      return defaultMock(command, args)
+    })
+    await renderShell()
+    const media = [...document.querySelectorAll('.zone2__item')].find((item) =>
+      item.textContent?.includes('Mídia'),
+    ) as HTMLElement
+    fireEvent.click(media)
+    await screen.findAllByTestId('media-tile')
+    selectFirstTile()
+
+    fireEvent.click(await screen.findByTestId('z5e-delete'))
+    fireEvent.click(await screen.findByTestId('media-delete-confirm'))
+
+    const toast = await screen.findByText(/algum arquivo pode estar em uso/)
+    expect(toast.closest('.md-toast--warn')).not.toBeNull()
+  })
+
+  it('[Cancelar] closes the confirm without deleting anything', async () => {
+    await openGallery()
+    selectFirstTile()
+
+    fireEvent.click(await screen.findByTestId('z5e-delete'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByTestId('media-delete-dialog')).toBeNull()
+    expect(invokeMock.mock.calls.some(([command]) => command === 'media_remove')).toBe(false)
+    // The selection survives a cancelled decision.
+    expect(screen.getByTestId('z5e-delete')).not.toBeNull()
   })
 })
 
